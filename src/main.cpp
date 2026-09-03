@@ -1,6 +1,7 @@
 #include "guff/caddy_router.hpp"
 #include "guff/clubhouse.hpp"
 #include "guff/data_leech.hpp"
+#include "guff/forge.hpp"
 #include "guff/hardware_profile.hpp"
 #include "guff/model_registry.hpp"
 #include "guff/reality.hpp"
@@ -18,7 +19,7 @@ int main() {
     guff::RealityStack reality;
     reality.observe({guff::RealityLayer::Project, "spiraletech/GOLF-GUFF", "ring", 1.0});
     reality.observe({guff::RealityLayer::Runtime, "native-cpp20", "guff-core", 1.0});
-    reality.observe({guff::RealityLayer::Semantic, "clubhouse-slot-capability-bus", "L9", 1.0});
+    reality.observe({guff::RealityLayer::Semantic, "forge-execution-adapter", "L10", 1.0});
 
     const auto hardware = guff::detect_hardware_profile();
     guff::ModelRegistry registry;
@@ -50,7 +51,7 @@ int main() {
     const auto delta = leech.observe_text(
         tool_grant,
         "tool://guff/bootstrap",
-        "L9 CLUBHOUSE capability bus online");
+        "L10 FORGE execution adapter online");
 
     if (delta.current) {
         static_cast<void>(symbiosis.stamp_observation(
@@ -61,7 +62,7 @@ int main() {
     if (auto slice = leech.slice_text(
             tool_grant,
             "tool://guff/bootstrap",
-            "L9 CLUBHOUSE capability bus online",
+            "L10 FORGE execution adapter online",
             0U,
             1024U)) {
         static_cast<void>(context.add(std::move(*slice)));
@@ -108,6 +109,7 @@ int main() {
         });
 
     guff::ClubhouseRegistry clubhouse;
+
     guff::SlotManifest xenon;
     xenon.slot_name = "xenon";
     xenon.display_name = "XENON Music Trinity";
@@ -121,17 +123,41 @@ int main() {
     xenon.max_payload_bytes = 4096U;
     static_cast<void>(clubhouse.register_slot(xenon));
 
-    guff::SlotInvocation slot_invocation;
-    slot_invocation.invocation_id = "bootstrap-xenon";
-    slot_invocation.slot_id = "xenon";
-    slot_invocation.capability = guff::SlotCapability::AudioGenerate;
-    slot_invocation.layer = guff::RealityLayer::Application;
-    slot_invocation.input_sha256 = guff::sha256("bootstrap four-bar generation request");
-    slot_invocation.payload_bytes = 128U;
-    slot_invocation.permission_tokens = {"audio:generate", "device:execute"};
-    const auto slot_resolution = clubhouse.resolve(slot_invocation);
+    guff::SlotManifest compiler;
+    compiler.slot_name = "forge.compiler";
+    compiler.display_name = "FORGE Compiler Adapter";
+    compiler.version = "1.0.0";
+    compiler.kind = guff::SlotKind::Compiler;
+    compiler.transport = guff::SlotTransport::LocalProcess;
+    compiler.entrypoint = "forge://compiler";
+    compiler.capabilities = {guff::SlotCapability::CodeBuild, guff::SlotCapability::CodeTest};
+    compiler.allowed_layers = {guff::RealityLayer::Project, guff::RealityLayer::Runtime};
+    compiler.required_permissions = {"code:build", "device:execute"};
+    compiler.max_payload_bytes = 4096U;
+    static_cast<void>(clubhouse.register_slot(compiler));
 
-    std::cout << "GOLF GUFF / RING L9\n";
+    const std::string forge_payload = "build target guff_core";
+    guff::ForgeExecutionRequest forge_request;
+    forge_request.invocation.invocation_id = "bootstrap-forge-build";
+    forge_request.invocation.slot_id = "forge.compiler";
+    forge_request.invocation.capability = guff::SlotCapability::CodeBuild;
+    forge_request.invocation.layer = guff::RealityLayer::Project;
+    forge_request.invocation.input_sha256 = guff::sha256(forge_payload);
+    forge_request.invocation.payload_bytes = forge_payload.size();
+    forge_request.invocation.permission_tokens = {"code:build", "device:execute"};
+    forge_request.payload = forge_payload;
+    forge_request.budget.max_wall_time_ms = 1000U;
+    forge_request.budget.max_output_bytes = 1024U;
+
+    guff::ForgeAdapter forge(clubhouse);
+    const auto forge_result = forge.execute(
+        forge_request,
+        [](const guff::SlotManifest&, const guff::ForgeExecutionRequest&, guff::ForgeOutputSink& output) {
+            static_cast<void>(output.write("synthetic compiler execution passed"));
+            return guff::ForgeExecutorReport{true, 0, 5U};
+        });
+
+    std::cout << "GOLF GUFF / RING L10\n";
     std::cout << "REALITY: " << reality.describe() << '\n';
     std::cout << "HARDWARE-ID: " << hardware.immutable_id() << '\n';
     std::cout << "SCORECARD-STORE: " << store.path().string() << " (lazy hydration)\n";
@@ -146,9 +172,11 @@ int main() {
     std::cout << "ZENKAI: " << guff::to_string(zenkai_result.stop_reason)
               << " attempts=" << zenkai_result.attempts
               << " verified=" << (zenkai_result.verified ? "yes" : "no") << '\n';
-    std::cout << "CLUBHOUSE: slots=" << clubhouse.size()
-              << " xenon=" << guff::to_string(slot_resolution.status)
-              << " capability=" << guff::to_string(slot_invocation.capability) << '\n';
+    std::cout << "CLUBHOUSE: slots=" << clubhouse.size() << '\n';
+    std::cout << "FORGE: " << guff::to_string(forge_result.status)
+              << " invocation=" << guff::to_string(forge_result.invocation_status)
+              << " evidence=" << forge_result.evidence.size()
+              << " output_bytes=" << forge_result.observed_output_bytes << '\n';
     std::cout << "CADDY-ROUTER: " << guff::to_string(decision.status)
               << " depth=" << decision.recursion_depth
               << " verify=" << (decision.require_verification ? "yes" : "no") << '\n';

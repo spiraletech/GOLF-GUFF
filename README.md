@@ -3,7 +3,7 @@
 **Codename:** The Ring  
 **Mission:** a memory-light, recursive, reality-aware AI development console for solo developers.
 
-GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, verification and capability-bus layer that decides which local model or deterministic tool should act on which layer of a developer's reality.
+GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, verification, capability-bus and execution-contract layer that decides which local model or deterministic tool may act on which layer of a developer's reality.
 
 ## L0 — Ring Foundation
 
@@ -51,39 +51,51 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 ## L9 — CLUBHOUSE Slot Capability Bus
 
-The Ring can now treat specialized programs as typed cartridges rather than hard-coded subsystems:
+- content-addressed `SlotManifest` cartridges with typed capabilities, STRATA layers, permission requirements and payload ceilings.
+- stable logical aliases such as `xenon` plus immutable `guff:slot:sha256:<digest>` identities.
+- `READY` means a slot invocation is eligible for execution, not that execution occurred.
 
-- `SlotManifest` declares logical identity, version, kind, transport, entrypoint, typed capabilities, STRATA layers, required permissions and payload ceiling.
-- each manifest receives immutable `guff:slot:sha256:<digest>` identity from canonical content.
-- capability/layer/permission/tag ordering is canonicalized so equivalent manifests keep the same identity.
-- `ClubhouseRegistry` supports immutable-ID lookup plus a stable logical alias such as `xenon`.
-- `SlotInvocation` contains only routing metadata and SHA-256 input identity; CLUBHOUSE does not retain the payload body.
-- resolution explicitly returns `READY`, `INVALID`, `SLOT_NOT_FOUND`, `SLOT_DISABLED`, `CAPABILITY_MISSING`, `PERMISSION_MISSING`, `LAYER_MISMATCH` or `PAYLOAD_TOO_LARGE`.
-- permission tokens are requirements supplied by an authority layer; CLUBHOUSE cannot mint its own authority.
-- `READY` means the invocation contract is eligible for an executor, not that execution occurred.
+## L10 — FORGE Execution Adapter
+
+The Ring now has a standardized execution boundary without fusing a shell or domain runtime into its core:
+
+- `ForgeExecutionRequest` carries a CLUBHOUSE invocation, transient payload and explicit wall-time/output budgets.
+- payload byte count and SHA-256 must exactly match the CLUBHOUSE invocation before any executor is called.
+- FORGE resolves the invocation itself and refuses execution unless CLUBHOUSE returns `READY`.
+- `ForgeOutputSink` retains at most the configured output byte ceiling and marks overflow explicitly.
+- raw executor output is discarded after the call; the result retains only counters and a SHA-256 of the bounded captured output.
+- callback wall time plus executor-reported elapsed time are checked against the wall-time budget.
+- build execution emits `BUILD` evidence, test execution emits `TEST` evidence, and all other capabilities emit `TOOL` evidence for ZENKAI.
+- pre-execution refusals emit no tool evidence because no tool actually ran.
+- `ForgeExecutionResult` explicitly reports `COMPLETED`, `INVALID_REQUEST`, `INVOCATION_REJECTED`, `INPUT_MISMATCH`, `EXECUTOR_ERROR`, `TIMEOUT`, `OUTPUT_BUDGET` or `EXECUTION_FAILED`.
+- FORGE remains an adapter contract; it does not yet own OS process launch or cancellation.
 
 ```text
-      CLUBHOUSE
-          |
-  content-addressed slots
-          |
-  +-------+-------+--------+--------+
-  |       |       |        |        |
-XENON   HAKUI   GITHUB   COMPILER  MODEL
- audio   world    repo      build   infer
-  |       |       |        |        |
-  +-------+-------+--------+--------+
-          |
-   INVOCATION ENVELOPE
- capability / layer / hash / bytes
-          |
-   permission requirements
-          |
-          v
- READY or explicit refusal
-          |
-          v
- future executor adapter
+CADDY / INTENT
+      |
+      v
+ CLUBHOUSE
+ capability / STRATA / permission
+      |
+    READY
+      |
+      v
+    FORGE
+ input hash / byte contract
+ wall-time / output budgets
+      |
+      v
+ EXECUTOR ADAPTER
+ compiler / XENON / HAKUI / GitHub / model / etc.
+      |
+      v
+ BUILD / TEST / TOOL EVIDENCE
+      |
+      v
+   ZENKAI
+      |
+      v
+    DOJO
 ```
 
 ## Design laws
@@ -113,6 +125,9 @@ XENON   HAKUI   GITHUB   COMPILER  MODEL
 23. **Programs are cartridges, not fused organs.** CLUBHOUSE defines a common capability contract while domain executors stay separate.
 24. **A slot cannot mint authority.** Permission requirements must be satisfied by authority supplied from outside the slot bus.
 25. **Eligibility is not execution.** A `READY` invocation has passed the bus contract only; executor evidence is still required.
+26. **FORGE re-verifies input identity.** A transient payload cannot be executed if it differs from the invocation hash/byte contract.
+27. **Execution output is bounded and disposable.** FORGE keeps compact hashes/counters/evidence rather than raw tool transcripts.
+28. **Execution evidence follows execution.** Refused invocations never masquerade as tool runs.
 
 ## Build
 
@@ -124,4 +139,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L10 should add FORGE, the first bounded executor-adapter contract: consume only `READY` CLUBHOUSE resolutions and return typed execution evidence to ZENKAI/DOJO without fusing process launch, compilers, GitHub or other domain implementations into the Ring core.
+L11 should add the first FORGE executor registry + native local-process backend: argv-based process launch without shell interpolation, granted working-directory constraints, bounded environment, stdout/stderr streaming into `ForgeOutputSink`, timeout termination and portable Windows/Linux process evidence.
