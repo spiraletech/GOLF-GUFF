@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.11.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.12.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,6 +19,7 @@ add_library(guff_core STATIC
     src/dojo.cpp
     src/clubhouse.cpp
     src/forge.cpp
+    src/native_process.cpp
     src/sha256.cpp
     src/model_manifest.cpp
     src/model_registry.cpp
@@ -28,7 +29,6 @@ add_library(guff_core STATIC
 )
 
 target_include_directories(guff_core PUBLIC include)
-
 target_compile_features(guff_core PUBLIC cxx_std_20)
 
 if(MSVC)
@@ -90,4 +90,8 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_forge tests/forge.cpp)
     target_link_libraries(guff_forge PRIVATE guff_core)
     add_test(NAME guff.forge COMMAND guff_forge)
+
+    add_executable(guff_native_process tests/native_process.cpp)
+    target_link_libraries(guff_native_process PRIVATE guff_core)
+    add_test(NAME guff.native_process COMMAND guff_native_process)
 endif()

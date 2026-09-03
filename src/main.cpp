@@ -4,6 +4,7 @@
 #include "guff/forge.hpp"
 #include "guff/hardware_profile.hpp"
 #include "guff/model_registry.hpp"
+#include "guff/native_process.hpp"
 #include "guff/reality.hpp"
 #include "guff/scorecard.hpp"
 #include "guff/scorecard_store.hpp"
@@ -19,7 +20,7 @@ int main() {
     guff::RealityStack reality;
     reality.observe({guff::RealityLayer::Project, "spiraletech/GOLF-GUFF", "ring", 1.0});
     reality.observe({guff::RealityLayer::Runtime, "native-cpp20", "guff-core", 1.0});
-    reality.observe({guff::RealityLayer::Semantic, "forge-execution-adapter", "L10", 1.0});
+    reality.observe({guff::RealityLayer::Semantic, "native-local-process-executor", "L11", 1.0});
 
     const auto hardware = guff::detect_hardware_profile();
     guff::ModelRegistry registry;
@@ -51,7 +52,7 @@ int main() {
     const auto delta = leech.observe_text(
         tool_grant,
         "tool://guff/bootstrap",
-        "L10 FORGE execution adapter online");
+        "L11 native local-process executor online");
 
     if (delta.current) {
         static_cast<void>(symbiosis.stamp_observation(
@@ -62,7 +63,7 @@ int main() {
     if (auto slice = leech.slice_text(
             tool_grant,
             "tool://guff/bootstrap",
-            "L10 FORGE execution adapter online",
+            "L11 native local-process executor online",
             0U,
             1024U)) {
         static_cast<void>(context.add(std::move(*slice)));
@@ -109,19 +110,7 @@ int main() {
         });
 
     guff::ClubhouseRegistry clubhouse;
-
-    guff::SlotManifest xenon;
-    xenon.slot_name = "xenon";
-    xenon.display_name = "XENON Music Trinity";
-    xenon.version = "1.0.0";
-    xenon.kind = guff::SlotKind::Audio;
-    xenon.transport = guff::SlotTransport::LocalProcess;
-    xenon.entrypoint = "xenon://native";
-    xenon.capabilities = {guff::SlotCapability::AudioAnalyze, guff::SlotCapability::AudioGenerate};
-    xenon.allowed_layers = {guff::RealityLayer::Application, guff::RealityLayer::Representation};
-    xenon.required_permissions = {"audio:generate", "device:execute"};
-    xenon.max_payload_bytes = 4096U;
-    static_cast<void>(clubhouse.register_slot(xenon));
+    guff::NativeProcessRegistry native_processes;
 
     guff::SlotManifest compiler;
     compiler.slot_name = "forge.compiler";
@@ -157,7 +146,7 @@ int main() {
             return guff::ForgeExecutorReport{true, 0, 5U};
         });
 
-    std::cout << "GOLF GUFF / RING L10\n";
+    std::cout << "GOLF GUFF / RING L11\n";
     std::cout << "REALITY: " << reality.describe() << '\n';
     std::cout << "HARDWARE-ID: " << hardware.immutable_id() << '\n';
     std::cout << "SCORECARD-STORE: " << store.path().string() << " (lazy hydration)\n";
@@ -177,6 +166,8 @@ int main() {
               << " invocation=" << guff::to_string(forge_result.invocation_status)
               << " evidence=" << forge_result.evidence.size()
               << " output_bytes=" << forge_result.observed_output_bytes << '\n';
+    std::cout << "NATIVE-PROCESS: bindings=" << native_processes.size()
+              << " shell=disabled argv=direct\n";
     std::cout << "CADDY-ROUTER: " << guff::to_string(decision.status)
               << " depth=" << decision.recursion_depth
               << " verify=" << (decision.require_verification ? "yes" : "no") << '\n';

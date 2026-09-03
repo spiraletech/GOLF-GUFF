@@ -3,14 +3,13 @@
 **Codename:** The Ring  
 **Mission:** a memory-light, recursive, reality-aware AI development console for solo developers.
 
-GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, verification, capability-bus and execution-contract layer that decides which local model or deterministic tool may act on which layer of a developer's reality.
+GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, verification, capability-bus and governed-execution layer that decides which local model or deterministic tool may act on which layer of a developer's reality.
 
 ## L0 — Ring Foundation
 
 - `RealityStack` — explicit physical, OS, runtime, project, application, simulation, semantic, memory, meta and representation coordinates.
 - `Caddy` — routes work toward tiny/core/deep local inference, deterministic tools or human review.
 - `Recursor` — bounded recursive refinement with hard depth/step/confidence stops.
-- native C++20, no third-party runtime dependency.
 
 ## L1 — Pristine Model Identity
 
@@ -41,61 +40,65 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 - bounded attempt → evidence → verification → retry/stop orchestration.
 - retries after attempt zero require explicit bounded retry authority.
-- attempts, tool events, evidence and traces all have hard ceilings.
 
 ## L8 — DOJO Trace Store
 
 - content-addressed compact learning episodes from CADDY + ZENKAI outcomes.
 - raw candidate state and route traces are represented by hashes, not retained bodies.
-- append-only cold persistence, bounded replay and compact JSONL export.
 
 ## L9 — CLUBHOUSE Slot Capability Bus
 
 - content-addressed `SlotManifest` cartridges with typed capabilities, STRATA layers, permission requirements and payload ceilings.
-- stable logical aliases such as `xenon` plus immutable `guff:slot:sha256:<digest>` identities.
 - `READY` means a slot invocation is eligible for execution, not that execution occurred.
 
 ## L10 — FORGE Execution Adapter
 
-The Ring now has a standardized execution boundary without fusing a shell or domain runtime into its core:
+- re-verifies transient payload bytes + SHA-256 against the CLUBHOUSE invocation.
+- enforces wall-time/output contracts and turns executor outcomes into typed ZENKAI evidence.
+- retains hashes/counters rather than raw tool transcripts.
 
-- `ForgeExecutionRequest` carries a CLUBHOUSE invocation, transient payload and explicit wall-time/output budgets.
-- payload byte count and SHA-256 must exactly match the CLUBHOUSE invocation before any executor is called.
-- FORGE resolves the invocation itself and refuses execution unless CLUBHOUSE returns `READY`.
-- `ForgeOutputSink` retains at most the configured output byte ceiling and marks overflow explicitly.
-- raw executor output is discarded after the call; the result retains only counters and a SHA-256 of the bounded captured output.
-- callback wall time plus executor-reported elapsed time are checked against the wall-time budget.
-- build execution emits `BUILD` evidence, test execution emits `TEST` evidence, and all other capabilities emit `TOOL` evidence for ZENKAI.
-- pre-execution refusals emit no tool evidence because no tool actually ran.
-- `ForgeExecutionResult` explicitly reports `COMPLETED`, `INVALID_REQUEST`, `INVOCATION_REJECTED`, `INPUT_MISMATCH`, `EXECUTOR_ERROR`, `TIMEOUT`, `OUTPUT_BUDGET` or `EXECUTION_FAILED`.
-- FORGE remains an adapter contract; it does not yet own OS process launch or cancellation.
+## L11 — Native Local-Process Executor
+
+The Ring can now spawn its first governed OS process without introducing a shell surface:
+
+- `NativeProcessRegistry` binds an exact immutable `LOCAL_PROCESS` slot to an absolute executable path and fixed argv contract.
+- the request payload cannot select an executable or command string.
+- payload mode is either `NONE` or `SINGLE_ARGUMENT`; a payload is never split into shell tokens.
+- POSIX uses direct `fork` + `execve`; Windows uses direct `CreateProcessW` with explicit application path and argv quoting.
+- working directories are canonicalized and must stay beneath a registered working root.
+- environment entries are explicit, validated and bounded by count/bytes.
+- stdout and stderr stream into the existing bounded `ForgeOutputSink`.
+- the child is terminated when the FORGE output or wall-time ceiling is crossed.
+- exit status flows back through `ForgeExecutorReport`, so FORGE still owns `BUILD` / `TEST` / `TOOL` evidence semantics.
 
 ```text
-CADDY / INTENT
-      |
-      v
- CLUBHOUSE
- capability / STRATA / permission
-      |
-    READY
-      |
-      v
-    FORGE
- input hash / byte contract
- wall-time / output budgets
-      |
-      v
- EXECUTOR ADAPTER
- compiler / XENON / HAKUI / GitHub / model / etc.
-      |
-      v
- BUILD / TEST / TOOL EVIDENCE
-      |
-      v
-   ZENKAI
-      |
-      v
-    DOJO
+CADDY
+  |
+  v
+CLUBHOUSE ---- slot capability / permission / STRATA
+  |
+ READY
+  |
+  v
+FORGE -------- payload hash / bytes / budgets
+  |
+  v
+NATIVE PROCESS REGISTRY
+ fixed executable / argv / root / environment
+  |
+  v
+OS CHILD PROCESS
+ execve | CreateProcessW
+  |
+ stdout + stderr
+  v
+ForgeOutputSink
+  |
+  v
+ZENKAI EVIDENCE
+  |
+  v
+DOJO
 ```
 
 ## Design laws
@@ -128,6 +131,10 @@ CADDY / INTENT
 26. **FORGE re-verifies input identity.** A transient payload cannot be executed if it differs from the invocation hash/byte contract.
 27. **Execution output is bounded and disposable.** FORGE keeps compact hashes/counters/evidence rather than raw tool transcripts.
 28. **Execution evidence follows execution.** Refused invocations never masquerade as tool runs.
+29. **Native execution is registry-bound.** The request cannot choose an arbitrary executable.
+30. **Shell syntax is data.** Native payloads are never interpolated through a shell.
+31. **Process reality is scoped.** Working directories must remain inside the registered root and environment state is bounded.
+32. **Budgets terminate work.** Native children are stopped when time/output authority is exhausted.
 
 ## Build
 
@@ -139,4 +146,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L11 should add the first FORGE executor registry + native local-process backend: argv-based process launch without shell interpolation, granted working-directory constraints, bounded environment, stdout/stderr streaming into `ForgeOutputSink`, timeout termination and portable Windows/Linux process evidence.
+L12 should add the first execution-session orchestrator: one bounded transaction linking CADDY → CLUBHOUSE → FORGE → native executor → ZENKAI → DOJO with a common correlation identity and explicit artifact/evidence promotion rules.
