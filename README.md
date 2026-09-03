@@ -45,41 +45,45 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 ## L8 — DOJO Trace Store
 
-The Ring can now retain compact learning episodes without turning transient work into permanent training data:
+- content-addressed compact learning episodes from CADDY + ZENKAI outcomes.
+- raw candidate state and route traces are represented by hashes, not retained bodies.
+- append-only cold persistence, bounded replay and compact JSONL export.
 
-- `DojoEpisode` records task/profile, exact hardware/model identities, route status, outcome and ZENKAI counters.
-- final candidate state and route trace are represented only by SHA-256 digests.
-- each episode receives an immutable `guff:dojo:sha256:<digest>` identity.
-- the append-only store rejects duplicate episode identities.
-- replay streams the cold journal and retains only the latest bounded matching slice.
-- query filters include task, outcome, profile, model and verified-only.
-- malformed records are reported and skipped rather than silently treated as valid training evidence.
-- compact JSONL export supports later evaluation/training pipelines without exporting raw prompts, source slices, candidate bodies or tool transcripts.
-- tag order is canonicalized for stable content identity.
+## L9 — CLUBHOUSE Slot Capability Bus
+
+The Ring can now treat specialized programs as typed cartridges rather than hard-coded subsystems:
+
+- `SlotManifest` declares logical identity, version, kind, transport, entrypoint, typed capabilities, STRATA layers, required permissions and payload ceiling.
+- each manifest receives immutable `guff:slot:sha256:<digest>` identity from canonical content.
+- capability/layer/permission/tag ordering is canonicalized so equivalent manifests keep the same identity.
+- `ClubhouseRegistry` supports immutable-ID lookup plus a stable logical alias such as `xenon`.
+- `SlotInvocation` contains only routing metadata and SHA-256 input identity; CLUBHOUSE does not retain the payload body.
+- resolution explicitly returns `READY`, `INVALID`, `SLOT_NOT_FOUND`, `SLOT_DISABLED`, `CAPABILITY_MISSING`, `PERMISSION_MISSING`, `LAYER_MISMATCH` or `PAYLOAD_TOO_LARGE`.
+- permission tokens are requirements supplied by an authority layer; CLUBHOUSE cannot mint its own authority.
+- `READY` means the invocation contract is eligible for an executor, not that execution occurred.
 
 ```text
-CADDY ROUTE + ZENKAI RESULT
+      CLUBHOUSE
+          |
+  content-addressed slots
+          |
+  +-------+-------+--------+--------+
+  |       |       |        |        |
+XENON   HAKUI   GITHUB   COMPILER  MODEL
+ audio   world    repo      build   infer
+  |       |       |        |        |
+  +-------+-------+--------+--------+
+          |
+   INVOCATION ENVELOPE
+ capability / layer / hash / bytes
+          |
+   permission requirements
           |
           v
-      DOJO EPISODE
- task / model / hardware / outcome
- counters / compact summary
- final-state hash / route-trace hash
+ READY or explicit refusal
           |
           v
-  guff:dojo:sha256:...
-          |
-          v
-   APPEND-ONLY JOURNAL
-          |
-     stream/filter
-          v
-   BOUNDED REPLAY SLICE
-          |
-      JSONL EXPORT
-          |
-          v
- SCORECARD / EVAL / TRAINING
+ future executor adapter
 ```
 
 ## Design laws
@@ -106,6 +110,9 @@ CADDY ROUTE + ZENKAI RESULT
 20. **Learning traces are summaries, not surveillance.** DOJO stores compact outcomes and hashes, not raw working context.
 21. **Training evidence is content-addressed.** Episode identity changes when its meaningful compact record changes.
 22. **Replay is bounded.** Learning history remains cold until a specific query hydrates a finite slice.
+23. **Programs are cartridges, not fused organs.** CLUBHOUSE defines a common capability contract while domain executors stay separate.
+24. **A slot cannot mint authority.** Permission requirements must be satisfied by authority supplied from outside the slot bus.
+25. **Eligibility is not execution.** A `READY` invocation has passed the bus contract only; executor evidence is still required.
 
 ## Build
 
@@ -117,4 +124,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L9 should add the first SLOT CAPABILITY BUS / CLUBHOUSE contract: content-addressed slot manifests, typed capabilities, permission requirements, deterministic invocation envelopes and a registry so XENON, HAKUI, GitHub, compilers and future creative tools can plug into the Ring without being fused into it.
+L10 should add FORGE, the first bounded executor-adapter contract: consume only `READY` CLUBHOUSE resolutions and return typed execution evidence to ZENKAI/DOJO without fusing process launch, compilers, GitHub or other domain implementations into the Ring core.

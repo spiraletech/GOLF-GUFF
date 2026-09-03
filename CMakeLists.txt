@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.9.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.10.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,6 +17,7 @@ add_library(guff_core STATIC
     src/symbiosis_ledger.cpp
     src/zenkai.cpp
     src/dojo.cpp
+    src/clubhouse.cpp
     src/sha256.cpp
     src/model_manifest.cpp
     src/model_registry.cpp
@@ -80,4 +81,8 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_dojo tests/dojo.cpp)
     target_link_libraries(guff_dojo PRIVATE guff_core)
     add_test(NAME guff.dojo COMMAND guff_dojo)
+
+    add_executable(guff_clubhouse tests/clubhouse.cpp)
+    target_link_libraries(guff_clubhouse PRIVATE guff_core)
+    add_test(NAME guff.clubhouse COMMAND guff_clubhouse)
 endif()
