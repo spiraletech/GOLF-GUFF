@@ -87,11 +87,13 @@ int main() {
     assert(replayed.size() == 1U);
     assert(replayed.front().episode_id == third.episode_id);
 
-    std::ifstream raw_input(temp, std::ios::binary);
-    const std::string raw((std::istreambuf_iterator<char>(raw_input)), std::istreambuf_iterator<char>());
-    assert(raw.find("SECRET RAW CANDIDATE") == std::string::npos);
-    assert(raw.find("SECRET ROUTE TRACE") == std::string::npos);
-    assert(raw.find("FAILED RAW CANDIDATE") == std::string::npos);
+    {
+        std::ifstream raw_input(temp, std::ios::binary);
+        const std::string raw((std::istreambuf_iterator<char>(raw_input)), std::istreambuf_iterator<char>());
+        assert(raw.find("SECRET RAW CANDIDATE") == std::string::npos);
+        assert(raw.find("SECRET ROUTE TRACE") == std::string::npos);
+        assert(raw.find("FAILED RAW CANDIDATE") == std::string::npos);
+    }
 
     std::vector<std::string> export_errors;
     guff::DojoQuery export_query;
@@ -99,11 +101,13 @@ int main() {
     export_query.limit = 8U;
     assert(store.export_jsonl(export_path, export_query, &export_errors));
     assert(export_errors.empty());
-    std::ifstream export_input(export_path, std::ios::binary);
-    const std::string exported((std::istreambuf_iterator<char>(export_input)), std::istreambuf_iterator<char>());
-    assert(exported.find("build repaired after bounded retry") != std::string::npos);
-    assert(exported.find("SECRET RAW CANDIDATE") == std::string::npos);
-    assert(exported.find("route_trace_sha256") != std::string::npos);
+    {
+        std::ifstream export_input(export_path, std::ios::binary);
+        const std::string exported((std::istreambuf_iterator<char>(export_input)), std::istreambuf_iterator<char>());
+        assert(exported.find("build repaired after bounded retry") != std::string::npos);
+        assert(exported.find("SECRET RAW CANDIDATE") == std::string::npos);
+        assert(exported.find("route_trace_sha256") != std::string::npos);
+    }
 
     auto invalid = first;
     invalid.episode_id.clear();
@@ -112,7 +116,9 @@ int main() {
 
     {
         std::ofstream corrupt(temp, std::ios::binary | std::ios::app);
+        assert(corrupt);
         corrupt << "D\tbroken\n";
+        assert(corrupt);
     }
     std::vector<std::string> replay_errors;
     guff::DojoQuery replay_all;
