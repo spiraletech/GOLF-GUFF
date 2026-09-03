@@ -31,43 +31,37 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 ## L3 — CADDY × SCORECARD Fusion
 
-The Ring can now turn benchmark evidence into an actual model-routing decision:
-
 - `CaddyRouter` preserves the base CADDY risk gate before model selection.
 - deterministic tasks stay routed to deterministic tools.
 - destructive uncertain work still escalates to human review.
-- model candidates must exist in the registry and, by default, be cryptographically verified.
-- candidates must satisfy the manifest hardware contract and task capability.
-- benchmark profile filters prevent unrelated tasks from contaminating a route.
-- duplicate benchmark runs for the same model collapse to the strongest eligible observation.
-- SCORECARD rank selects the best remaining club on the current machine.
-- score confidence can raise or lower the bounded recursion budget while execution keeps verification enabled.
+- candidates must exist in the registry, pass verification by default, satisfy hardware/capability contracts, and match the benchmark profile.
+- SCORECARD selects the best remaining club on the current machine.
 - absent evidence produces an explicit refusal state instead of a guessed model.
 
+## L4 — Persistent SCORECARD + Route Trace
+
+The Ring can now keep benchmark evidence on disk without keeping the whole benchmark corpus resident in RAM:
+
+- `ScorecardStore` is an append-only, dependency-free benchmark journal.
+- string fields are hex-escaped, so tabs/newlines in metadata cannot corrupt record boundaries.
+- duplicate run IDs are rejected before append.
+- hydration streams the journal line-by-line and filters by exact hardware ID, task and optional profile.
+- a bounded hydration limit retains the strongest matching observations seen across the whole file instead of blindly taking the first N records.
+- missing stores are treated as an empty evidence source rather than a fatal condition.
+- malformed records are rejected and reported without loading them as trusted evidence.
+- `RouteTrace` records the exact routing path: risk gate, SCORECARD evidence, profile/score/registry/verification/hardware/capability gates, final selection and recursion/verification budget.
+- route traces are bounded to 64 entries so observability cannot become an unbounded memory sink.
+
 ```text
-TASK / REALITY
-      |
-      v
-  base CADDY --------------------> TOOL / HUMAN when appropriate
-      |
-      v
-CURRENT HARDWARE-ID
-      +-------------------+
-      |                   |
-VERIFIED MODEL REGISTRY   SCORECARD(task + profile + hardware)
-      |                   |
-      +---------+---------+
-                v
-         ELIGIBILITY GATES
-                |
-                v
-          RANKED CLUBS
-                |
-                v
-       MODEL + RECURSION BUDGET
-                |
-                v
-             VERIFY
+DISK JOURNAL
+    |
+    | stream / filter / retain strongest N
+    v
+HOT SCORECARD SLICE ---> CADDY ROUTER ---> MODEL / TOOL / HUMAN
+                              |
+                              v
+                    BOUNDED ROUTE TRACE
+                 PASS / REJECT / SELECT / STOP
 ```
 
 ## Design laws
@@ -81,6 +75,8 @@ VERIFIED MODEL REGISTRY   SCORECARD(task + profile + hardware)
 7. **Model identity is cryptographic.** A filename never establishes trust.
 8. **Benchmarks are contextual.** A score without task + hardware identity is not routing evidence.
 9. **Routing requires evidence.** No benchmark, no invented club selection.
+10. **Persistence stays cold by default.** Disk is the corpus; RAM holds only the current working slice.
+11. **Every route is explainable.** Selection and refusal gates leave a bounded trace.
 
 ## Build
 
@@ -92,4 +88,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L4 should add the first persistent SCORECARD store plus route-trace records so CADDY can reload benchmark evidence without keeping it resident in memory and every selection can explain which facts caused the route.
+L5 should add the first permissioned DATA LEECH / context-slice layer: content-addressed source observations, delta detection and bounded task-local hydration from repos/files/tool outputs without turning ORGANIC into a giant resident database.
