@@ -1,4 +1,5 @@
 #include "guff/caddy.hpp"
+#include "guff/hardware_profile.hpp"
 #include "guff/model_manifest.hpp"
 #include "guff/reality.hpp"
 #include "guff/recursor.hpp"
@@ -10,13 +11,13 @@ int main() {
     guff::RealityStack reality;
     reality.observe({guff::RealityLayer::Project, "spiraletech/GOLF-GUFF", "ring", 1.0});
     reality.observe({guff::RealityLayer::Runtime, "native-cpp20", "guff-core", 1.0});
-    reality.observe({guff::RealityLayer::Semantic, "model-identity", "L1", 1.0});
+    reality.observe({guff::RealityLayer::Semantic, "scorecard", "L2", 1.0});
 
     guff::Caddy caddy;
     const auto route = caddy.route({
-        .intent = "verify pristine model identity",
+        .intent = "benchmark a verified model on current hardware",
         .layer = guff::RealityLayer::Runtime,
-        .complexity = 0.35,
+        .complexity = 0.45,
         .uncertainty = 0.10,
         .requires_execution = true,
         .destructive = false,
@@ -52,7 +53,7 @@ int main() {
     manifest.provenance = {
         .provider = "GOLF GUFF",
         .repository = "spiraletech/GOLF-GUFF",
-        .revision = "L1",
+        .revision = "L2",
         .source_filename = "reference-master",
         .source_sha256 = guff::sha256("reference-master"),
     };
@@ -69,7 +70,9 @@ int main() {
         .cpu_only_supported = true,
     };
 
-    std::cout << "GOLF GUFF / RING L1\n";
+    const auto hardware = guff::detect_hardware_profile();
+
+    std::cout << "GOLF GUFF / RING L2\n";
     std::cout << "REALITY: " << reality.describe() << '\n';
     std::cout << "CADDY: " << guff::to_string(route.target)
               << " depth=" << route.recursion_depth
@@ -78,6 +81,11 @@ int main() {
               << " confidence=" << result.confidence
               << " state=" << result.state << '\n';
     std::cout << "MODEL-ID: " << manifest.immutable_id() << '\n';
+    std::cout << "HARDWARE-ID: " << hardware.immutable_id() << '\n';
+    std::cout << "HARDWARE: " << guff::to_string(hardware.platform)
+              << '/' << guff::to_string(hardware.architecture)
+              << " threads=" << hardware.logical_threads
+              << " ram_mb=" << hardware.ram_mb << '\n';
 
     return 0;
 }
