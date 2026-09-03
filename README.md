@@ -39,36 +39,47 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 ## L7 — ZENKAI Verification Loop
 
-The Ring can now run bounded self-correction attempts without hiding why another attempt was permitted:
+- bounded attempt → evidence → verification → retry/stop orchestration.
+- retries after attempt zero require explicit bounded retry authority.
+- attempts, tool events, evidence and traces all have hard ceilings.
 
-- `ZenkaiLoop` orchestrates attempt → evidence → verification → retry/stop.
-- the first attempt is always evaluable, but attempts after the first require explicit `RetryAuthority::Bounded`.
-- evidence is typed as build, test, tool or verifier evidence.
-- tool-event count, evidence-item count, evidence bytes, attempt count and trace length all have hard limits.
-- evidence detail strings are clipped before accounting so giant logs cannot become a hidden memory sink.
-- verifier success alone is insufficient; `passed=true` must also meet the configured confidence threshold.
-- `NO_NEW_INFORMATION`, `FATAL_FAILURE`, `ATTEMPT_BUDGET`, `TOOL_BUDGET`, `EVIDENCE_BUDGET` and `RETRY_NOT_AUTHORIZED` are explicit stop reasons.
-- ZENKAI does not execute commands by itself. The caller supplies an attempt function that returns bounded evidence and a verifier outcome.
+## L8 — DOJO Trace Store
+
+The Ring can now retain compact learning episodes without turning transient work into permanent training data:
+
+- `DojoEpisode` records task/profile, exact hardware/model identities, route status, outcome and ZENKAI counters.
+- final candidate state and route trace are represented only by SHA-256 digests.
+- each episode receives an immutable `guff:dojo:sha256:<digest>` identity.
+- the append-only store rejects duplicate episode identities.
+- replay streams the cold journal and retains only the latest bounded matching slice.
+- query filters include task, outcome, profile, model and verified-only.
+- malformed records are reported and skipped rather than silently treated as valid training evidence.
+- compact JSONL export supports later evaluation/training pipelines without exporting raw prompts, source slices, candidate bodies or tool transcripts.
+- tag order is canonicalized for stable content identity.
 
 ```text
-INITIAL CANDIDATE
-       |
-       v
-   ATTEMPT #1
-       |
-       +---- build/test/tool evidence
-       |
-       v
-    VERIFIER
-       |
-       +---- pass + confidence threshold ----> VERIFIED
-       |
-       +---- fatal / no-new-info / budget ---> STOP
-       |
-       +---- retry authority? no ------------> STOP
-       |
-       v yes
-   ATTEMPT #2 ... bounded
+CADDY ROUTE + ZENKAI RESULT
+          |
+          v
+      DOJO EPISODE
+ task / model / hardware / outcome
+ counters / compact summary
+ final-state hash / route-trace hash
+          |
+          v
+  guff:dojo:sha256:...
+          |
+          v
+   APPEND-ONLY JOURNAL
+          |
+     stream/filter
+          v
+   BOUNDED REPLAY SLICE
+          |
+      JSONL EXPORT
+          |
+          v
+ SCORECARD / EVAL / TRAINING
 ```
 
 ## Design laws
@@ -92,6 +103,9 @@ INITIAL CANDIDATE
 17. **Retries require authority.** A failed attempt does not automatically grant another execution attempt.
 18. **Verification requires evidence.** Success is not accepted solely because a model says it succeeded.
 19. **Self-correction is budgeted.** Attempts, tools, evidence and traces all have hard ceilings.
+20. **Learning traces are summaries, not surveillance.** DOJO stores compact outcomes and hashes, not raw working context.
+21. **Training evidence is content-addressed.** Episode identity changes when its meaningful compact record changes.
+22. **Replay is bounded.** Learning history remains cold until a specific query hydrates a finite slice.
 
 ## Build
 
@@ -103,4 +117,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L8 should add the first DOJO trace store: compact success/failure episodes from routes and ZENKAI runs, content-addressed outcomes and bounded replay data suitable for later SCORECARD learning, routing improvement and adapter training without retaining raw working context.
+L9 should add the first SLOT CAPABILITY BUS / CLUBHOUSE contract: content-addressed slot manifests, typed capabilities, permission requirements, deterministic invocation envelopes and a registry so XENON, HAKUI, GitHub, compilers and future creative tools can plug into the Ring without being fused into it.
