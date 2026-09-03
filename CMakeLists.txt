@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.2.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,6 +14,8 @@ add_library(guff_core STATIC
     src/sha256.cpp
     src/model_manifest.cpp
     src/model_registry.cpp
+    src/hardware_profile.cpp
+    src/scorecard.cpp
 )
 
 target_include_directories(guff_core PUBLIC include)
@@ -39,4 +41,8 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_model_identity tests/model_identity.cpp)
     target_link_libraries(guff_model_identity PRIVATE guff_core)
     add_test(NAME guff.model_identity COMMAND guff_model_identity)
+
+    add_executable(guff_scorecard tests/scorecard.cpp)
+    target_link_libraries(guff_scorecard PRIVATE guff_core)
+    add_test(NAME guff.scorecard COMMAND guff_scorecard)
 endif()

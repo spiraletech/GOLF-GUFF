@@ -14,21 +14,33 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 ## L1 — Pristine Model Identity
 
-The Ring now has a cryptographic club registry:
-
-- `ModelManifest` — architecture, family, parameter count, GGUF/weight format, quantization, provenance, licensing, hardware requirements and capability metadata.
+- `ModelManifest` — architecture, family, parameter count, format, quantization, provenance, licensing, hardware requirements and capability metadata.
 - immutable `guff:model:sha256:<digest>` model IDs derived from canonical manifest identity.
 - streaming SHA-256 for multi-gigabyte weights without loading them into RAM.
 - exact file-size + digest verification before trusted admission.
 - `ModelRegistry` with validated and verified registration paths.
 - upstream source revision + SHA lineage so a derived GGUF can be traced back to its pristine master.
 
-```text
-Reality -> Caddy -> Recursor -> Verify
-   ^                              |
-   +------------ delta -----------+
+## L2 — SCORECARD Foundation
 
-pristine master -> provenance -> GGUF -> SHA-256 -> MODEL-ID -> Registry
+The Ring can now identify the machine and record comparable model performance:
+
+- `HardwareProfile` — platform, CPU architecture, logical threads, RAM and optional GPU/VRAM metadata.
+- immutable `guff:hardware:sha256:<digest>` IDs from canonical hardware descriptions.
+- dependency-free Windows/Linux/macOS CPU + RAM discovery; GPU metadata remains explicit until a backend reports it.
+- `BenchmarkRecord` — task class, profile, context/output size, prompt/gen throughput, TTFT, wall time, peak RAM/VRAM, accuracy, tool success, verifier pass rate, retries, completion and optional energy.
+- `ScorecardEvaluator` — weighted 0–100 quality, speed, memory-efficiency, reliability and energy-efficiency dimensions.
+- `Scorecard` — validates runs and ranks only benchmarks measured on the exact same hardware fingerprint and task class.
+
+```text
+pristine master -> provenance -> GGUF -> SHA-256 -> MODEL-ID
+                                                 |
+CURRENT MACHINE -> HARDWARE-ID ------------------+
+                                                 v
+                                  task benchmark -> SCORECARD
+                                                 |
+                                                 v
+                                      evidence for CADDY
 ```
 
 ## Design laws
@@ -40,6 +52,7 @@ pristine master -> provenance -> GGUF -> SHA-256 -> MODEL-ID -> Registry
 5. **Symbiosis is permissioned.** User authority is the root authority.
 6. **Aesthetics never corrupt semantics.** CHROMA/AURA/GLYPH remain presentation metadata.
 7. **Model identity is cryptographic.** A filename never establishes trust.
+8. **Benchmarks are contextual.** A score without task + hardware identity is not routing evidence.
 
 ## Build
 
@@ -51,4 +64,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L2 adds the first SCORECARD hardware fingerprint and benchmark record so CADDY can route models by measured latency, memory cost and task success instead of model-name vibes.
+L3 connects CADDY to SCORECARD so route decisions can select a verified model by task fit, measured quality, latency and memory headroom on the current machine.
