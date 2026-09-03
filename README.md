@@ -40,8 +40,6 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 ## L5 — DATA LEECH + Context Slices
 
-The Ring can now reconstruct a bounded piece of its environment without treating RAM as the world:
-
 - `SourceGrant` is the explicit permission contract for a source.
 - grants distinguish file, repo-file and tool-output sources plus session/project/device-local scope.
 - file grants resolve paths and prevent reads outside the permitted root.
@@ -50,29 +48,53 @@ The Ring can now reconstruct a bounded piece of its environment without treating
 - compact previous observations enable `FIRST_SEEN`, `UNCHANGED` and `MODIFIED` delta detection without retaining source bodies.
 - `ContextSlice` rehydrates only requested bytes and carries content hash + offset provenance.
 - `ContextArena` bounds hot slice count and aggregate bytes, rejects duplicates, and can be cleared at task end.
-- oversized, missing, denied and unreadable sources remain explicit states.
+
+## L6 — SYMBIOSIS LEDGER
+
+The Ring can now maintain an inspectable boundary between permission, observation and memory:
+
+- `SymbiosisGrant` wraps a `SourceGrant` with issue/expiry timestamps and explicit retention policy.
+- grant lifecycle is `PENDING`, `ACTIVE`, `REVOKED`, `EXPIRED` or `MISSING`.
+- session-only grants may remain entirely ephemeral; persistent grants use an append-only ledger journal.
+- observation stamps retain only grant ID, source ID, SHA-256, byte size, STRATA layer and observation time.
+- per-grant stamp counts are bounded; old hot stamps are evicted instead of growing without limit.
+- persistent observation stamps require a persistent grant.
+- memory promotion is separately permissioned and stores only an explicit compact summary, never the original source body.
+- promotion requires a matching prior observation stamp for the exact source identity + content hash.
+- promoted memory receives an immutable `guff:memory:sha256:<digest>` identity.
+- promotions are inspectable and can be explicitly forgotten; forgetting is also journaled when persistence is enabled.
+- replay reconstructs only persistent authority/stamps/promotions from the compact event journal.
 
 ```text
 USER AUTHORITY
       |
       v
- SOURCE GRANT
+ SYMBIOSIS GRANT
+ issue / expiry / retention
+      |
+      +------ revoke / expire ------> INACTIVE
       |
       v
-  DATA LEECH -------- denied/out-of-scope ---> STOP
-      |
-      +---- hash/size ----> OBSERVATION STAMP
-      |                         |
-      |                     compare delta
-      v                         |
- bounded slice <----------------+
+  DATA LEECH
       |
       v
- CONTEXT ARENA
- task-local hot bytes
+ SOURCE OBSERVATION
+ hash + size + layer
       |
       v
- CADDY / RECURSOR / TOOLS
+ OBSERVATION STAMP
+ bounded / optionally persistent
+      |
+      +---- no promotion authority ----> STOP
+      |
+      v
+ EXPLICIT PROMOTION
+ compact summary only
+      |
+      v
+ ORGANIC-FACING MEMORY ID
+      |
+      +---- forget ----> tombstoned
 ```
 
 ## Design laws
@@ -90,6 +112,9 @@ USER AUTHORITY
 11. **Every route is explainable.** Selection and refusal gates leave a bounded trace.
 12. **Perception requires a grant.** DATA LEECH cannot create its own authority or escape its granted source boundary.
 13. **Hot context is disposable.** Source bodies remain external; task-local slices have hard byte/count budgets.
+14. **Observation is not memory.** Seeing a source never silently promotes it into ORGANIC.
+15. **Authority has lifecycle.** Grants can be pending, revoked or expired and are checked at action time.
+16. **Promotion is explicit and reversible.** Only permitted, stamped facts may be promoted, and promoted summaries can be forgotten.
 
 ## Build
 
@@ -101,4 +126,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L6 should add the SYMBIOSIS LEDGER: grant lifecycle, revocation/expiry, compact observation-stamp persistence, source retention policy, and inspectable promotion of selected facts into ORGANIC memory.
+L7 should add the first ZENKAI verification loop: bounded attempt records, tool/compile/test evidence, verifier outcomes and retry policy so recursion can improve a result without hiding why another attempt was allowed.
