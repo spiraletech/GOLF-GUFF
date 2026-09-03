@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.5.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.6.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,6 +13,7 @@ add_library(guff_core STATIC
     src/caddy.cpp
     src/caddy_router.cpp
     src/route_trace.cpp
+    src/data_leech.cpp
     src/sha256.cpp
     src/model_manifest.cpp
     src/model_registry.cpp
@@ -60,4 +61,8 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_route_trace tests/route_trace.cpp)
     target_link_libraries(guff_route_trace PRIVATE guff_core)
     add_test(NAME guff.route_trace COMMAND guff_route_trace)
+
+    add_executable(guff_data_leech tests/data_leech.cpp)
+    target_link_libraries(guff_data_leech PRIVATE guff_core)
+    add_test(NAME guff.data_leech COMMAND guff_data_leech)
 endif()
