@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iomanip>
+#include <sstream>
 #include <string_view>
 #include <unordered_set>
 
@@ -61,6 +63,14 @@ bool hardware_compatible(const ModelManifest& manifest,
     return true;
 }
 
+std::string score_detail(const RankedBenchmark& benchmark) {
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(2)
+        << "score=" << benchmark.score.total
+        << " run=" << benchmark.record.run_id;
+    return out.str();
+}
+
 } // namespace
 
 bool ModelRouteDecision::selected() const noexcept {
@@ -77,16 +87,20 @@ ModelRouteDecision CaddyRouter::select(const ModelRouteRequest& request,
     decision.task_route = caddy.route(request.signal);
     decision.recursion_depth = decision.task_route.recursion_depth;
     decision.require_verification = decision.task_route.require_verification;
+    decision.trace.add("risk-gate", RouteTraceOutcome::Info,
+                       std::string(to_string(decision.task_route.target)) + ": " + decision.task_route.reason);
 
     if (decision.task_route.target == RouteTarget::HumanReview) {
         decision.status = ModelRouteStatus::HumanReviewRequired;
         decision.reason = "base CADDY risk gate requires human review before model routing";
+        decision.trace.add("route-stop", RouteTraceOutcome::Stop, decision.reason);
         return decision;
     }
 
     if (decision.task_route.target == RouteTarget::DeterministicTool) {
         decision.status = ModelRouteStatus::DeterministicPreferred;
         decision.reason = "base CADDY prefers a deterministic tool; model selection intentionally skipped";
+        decision.trace.add("route-stop", RouteTraceOutcome::Stop, decision.reason);
         return decision;
     }
 
@@ -94,38 +108,62 @@ ModelRouteDecision CaddyRouter::select(const ModelRouteRequest& request,
     if (ranked.empty()) {
         decision.status = ModelRouteStatus::NoBenchmarkEvidence;
         decision.reason = "no SCORECARD evidence exists for this task on this exact hardware identity";
+        decision.trace.add("scorecard", RouteTraceOutcome::Stop, decision.reason);
         return decision;
     }
+    decision.trace.add("scorecard", RouteTraceOutcome::Pass,
+                       "matched benchmark rows=" + std::to_string(ranked.size()));
 
     const double minimum_score = std::clamp(request.minimum_score, 0.0, 100.0);
     std::unordered_set<std::string> seen_models;
 
     for (const auto& ranked_benchmark : ranked) {
         const auto& record = ranked_benchmark.record;
+        const auto detail = score_detail(ranked_benchmark);
         if (!request.profile_name.empty() && record.profile_name != request.profile_name) {
+            decision.trace.add("profile-gate", RouteTraceOutcome::Reject,
+                               "benchmark profile mismatch; " + detail, record.model_id);
             continue;
         }
         if (ranked_benchmark.score.total < minimum_score) {
+            decision.trace.add("score-gate", RouteTraceOutcome::Reject,
+                               "below minimum score; " + detail, record.model_id);
             continue;
         }
         if (!seen_models.emplace(record.model_id).second) {
+            decision.trace.add("dedupe-gate", RouteTraceOutcome::Reject,
+                               "lower-ranked duplicate model observation; " + detail, record.model_id);
             continue;
         }
 
         const auto manifest = registry_.find(record.model_id);
         if (!manifest) {
+            decision.trace.add("registry-gate", RouteTraceOutcome::Reject,
+                               "benchmark model is absent from the current registry; " + detail,
+                               record.model_id);
             continue;
         }
         if (request.require_verified && !registry_.is_verified(record.model_id)) {
+            decision.trace.add("verification-gate", RouteTraceOutcome::Reject,
+                               "model is registered but not cryptographically verified; " + detail,
+                               record.model_id);
             continue;
         }
         if (!hardware_compatible(*manifest, hardware)) {
+            decision.trace.add("hardware-gate", RouteTraceOutcome::Reject,
+                               "manifest hardware contract does not fit current machine; " + detail,
+                               record.model_id);
             continue;
         }
         if (!supports_task(*manifest, request.task)) {
+            decision.trace.add("capability-gate", RouteTraceOutcome::Reject,
+                               "manifest does not declare the required task capability; " + detail,
+                               record.model_id);
             continue;
         }
 
+        decision.trace.add("eligibility", RouteTraceOutcome::Pass,
+                           "candidate passed all routing gates; " + detail, record.model_id);
         decision.candidates.push_back({
             .model_id = record.model_id,
             .display_name = manifest->display_name,
@@ -137,6 +175,7 @@ ModelRouteDecision CaddyRouter::select(const ModelRouteRequest& request,
     if (decision.candidates.empty()) {
         decision.status = ModelRouteStatus::NoEligibleModel;
         decision.reason = "benchmarks exist, but no model passes registry, verification, capability, hardware, profile and score gates";
+        decision.trace.add("route-stop", RouteTraceOutcome::Stop, decision.reason);
         return decision;
     }
 
@@ -144,6 +183,8 @@ ModelRouteDecision CaddyRouter::select(const ModelRouteRequest& request,
     decision.status = ModelRouteStatus::Selected;
     decision.selected_model_id = winner.model_id;
     decision.selected_score = winner.score;
+    decision.trace.add("selection", RouteTraceOutcome::Select,
+                       "highest-scoring eligible candidate", winner.model_id);
 
     auto depth = decision.task_route.recursion_depth;
     if (winner.score.total < 55.0) {
@@ -157,6 +198,10 @@ ModelRouteDecision CaddyRouter::select(const ModelRouteRequest& request,
     decision.require_verification = decision.task_route.require_verification ||
                                     request.signal.requires_execution ||
                                     winner.score.total < 85.0;
+    decision.trace.add("budget", RouteTraceOutcome::Info,
+                       "recursion_depth=" + std::to_string(decision.recursion_depth) +
+                       " verify=" + (decision.require_verification ? std::string("yes") : std::string("no")),
+                       winner.model_id);
     decision.reason = "selected the highest-scoring eligible verified model measured on the current task and hardware course";
     return decision;
 }

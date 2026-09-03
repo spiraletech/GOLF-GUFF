@@ -2,6 +2,7 @@
 
 #include "guff/caddy.hpp"
 #include "guff/model_registry.hpp"
+#include "guff/route_trace.hpp"
 #include "guff/scorecard.hpp"
 
 #include <cstddef>
@@ -45,6 +46,7 @@ struct ModelRouteDecision {
     std::size_t recursion_depth{1};
     bool require_verification{true};
     std::vector<ModelCandidate> candidates;
+    RouteTrace trace;
     std::string reason;
 
     [[nodiscard]] bool selected() const noexcept;
