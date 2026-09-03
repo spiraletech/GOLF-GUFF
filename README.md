@@ -18,29 +18,56 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 - immutable `guff:model:sha256:<digest>` model IDs derived from canonical manifest identity.
 - streaming SHA-256 for multi-gigabyte weights without loading them into RAM.
 - exact file-size + digest verification before trusted admission.
-- `ModelRegistry` with validated and verified registration paths.
+- `ModelRegistry` tracks validated manifests separately from cryptographically verified model files.
 - upstream source revision + SHA lineage so a derived GGUF can be traced back to its pristine master.
 
 ## L2 — SCORECARD Foundation
 
-The Ring can now identify the machine and record comparable model performance:
-
 - `HardwareProfile` — platform, CPU architecture, logical threads, RAM and optional GPU/VRAM metadata.
-- immutable `guff:hardware:sha256:<digest>` IDs from canonical hardware descriptions.
-- dependency-free Windows/Linux/macOS CPU + RAM discovery; GPU metadata remains explicit until a backend reports it.
-- `BenchmarkRecord` — task class, profile, context/output size, prompt/gen throughput, TTFT, wall time, peak RAM/VRAM, accuracy, tool success, verifier pass rate, retries, completion and optional energy.
-- `ScorecardEvaluator` — weighted 0–100 quality, speed, memory-efficiency, reliability and energy-efficiency dimensions.
-- `Scorecard` — validates runs and ranks only benchmarks measured on the exact same hardware fingerprint and task class.
+- immutable `guff:hardware:sha256:<digest>` hardware identity.
+- `BenchmarkRecord` — task/profile identity plus latency, throughput, memory, accuracy, tool, verifier, retry, completion and optional energy telemetry.
+- `ScorecardEvaluator` — weighted quality, speed, memory-efficiency, reliability and energy-efficiency dimensions.
+- fair-course ranking only on the exact same hardware identity and task class.
+
+## L3 — CADDY × SCORECARD Fusion
+
+The Ring can now turn benchmark evidence into an actual model-routing decision:
+
+- `CaddyRouter` preserves the base CADDY risk gate before model selection.
+- deterministic tasks stay routed to deterministic tools.
+- destructive uncertain work still escalates to human review.
+- model candidates must exist in the registry and, by default, be cryptographically verified.
+- candidates must satisfy the manifest hardware contract and task capability.
+- benchmark profile filters prevent unrelated tasks from contaminating a route.
+- duplicate benchmark runs for the same model collapse to the strongest eligible observation.
+- SCORECARD rank selects the best remaining club on the current machine.
+- score confidence can raise or lower the bounded recursion budget while execution keeps verification enabled.
+- absent evidence produces an explicit refusal state instead of a guessed model.
 
 ```text
-pristine master -> provenance -> GGUF -> SHA-256 -> MODEL-ID
-                                                 |
-CURRENT MACHINE -> HARDWARE-ID ------------------+
-                                                 v
-                                  task benchmark -> SCORECARD
-                                                 |
-                                                 v
-                                      evidence for CADDY
+TASK / REALITY
+      |
+      v
+  base CADDY --------------------> TOOL / HUMAN when appropriate
+      |
+      v
+CURRENT HARDWARE-ID
+      +-------------------+
+      |                   |
+VERIFIED MODEL REGISTRY   SCORECARD(task + profile + hardware)
+      |                   |
+      +---------+---------+
+                v
+         ELIGIBILITY GATES
+                |
+                v
+          RANKED CLUBS
+                |
+                v
+       MODEL + RECURSION BUDGET
+                |
+                v
+             VERIFY
 ```
 
 ## Design laws
@@ -53,6 +80,7 @@ CURRENT MACHINE -> HARDWARE-ID ------------------+
 6. **Aesthetics never corrupt semantics.** CHROMA/AURA/GLYPH remain presentation metadata.
 7. **Model identity is cryptographic.** A filename never establishes trust.
 8. **Benchmarks are contextual.** A score without task + hardware identity is not routing evidence.
+9. **Routing requires evidence.** No benchmark, no invented club selection.
 
 ## Build
 
@@ -64,4 +92,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L3 connects CADDY to SCORECARD so route decisions can select a verified model by task fit, measured quality, latency and memory headroom on the current machine.
+L4 should add the first persistent SCORECARD store plus route-trace records so CADDY can reload benchmark evidence without keeping it resident in memory and every selection can explain which facts caused the route.

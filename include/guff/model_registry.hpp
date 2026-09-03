@@ -35,11 +35,18 @@ public:
         const std::filesystem::path& model_path);
 
     [[nodiscard]] std::optional<ModelManifest> find(std::string_view immutable_id) const;
+    [[nodiscard]] bool is_verified(std::string_view immutable_id) const noexcept;
     [[nodiscard]] std::vector<std::string> ids() const;
+    [[nodiscard]] std::vector<std::string> verified_ids() const;
     [[nodiscard]] std::size_t size() const noexcept;
 
 private:
-    std::unordered_map<std::string, ModelManifest> models_;
+    struct RegistryEntry {
+        ModelManifest manifest;
+        bool verified{false};
+    };
+
+    std::unordered_map<std::string, RegistryEntry> models_;
 };
 
 [[nodiscard]] std::string_view to_string(RegisterStatus status) noexcept;

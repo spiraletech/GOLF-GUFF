@@ -24,7 +24,7 @@ RegisterResult ModelRegistry::register_manifest(ModelManifest manifest) {
         return result;
     }
 
-    models_.emplace(result.immutable_id, std::move(manifest));
+    models_.emplace(result.immutable_id, RegistryEntry{std::move(manifest), false});
     result.status = RegisterStatus::Registered;
     return result;
 }
@@ -45,7 +45,22 @@ RegisterResult ModelRegistry::register_verified(
         return result;
     }
 
-    return register_manifest(std::move(manifest));
+    RegisterResult result;
+    result.immutable_id = manifest.immutable_id();
+    if (auto it = models_.find(result.immutable_id); it != models_.end()) {
+        if (it->second.verified) {
+            result.status = RegisterStatus::Duplicate;
+            return result;
+        }
+        it->second.manifest = std::move(manifest);
+        it->second.verified = true;
+        result.status = RegisterStatus::Registered;
+        return result;
+    }
+
+    models_.emplace(result.immutable_id, RegistryEntry{std::move(manifest), true});
+    result.status = RegisterStatus::Registered;
+    return result;
 }
 
 std::optional<ModelManifest> ModelRegistry::find(std::string_view immutable_id) const {
@@ -53,16 +68,35 @@ std::optional<ModelManifest> ModelRegistry::find(std::string_view immutable_id) 
     if (it == models_.end()) {
         return std::nullopt;
     }
-    return it->second;
+    return it->second.manifest;
+}
+
+bool ModelRegistry::is_verified(std::string_view immutable_id) const noexcept {
+    const auto it = models_.find(std::string(immutable_id));
+    return it != models_.end() && it->second.verified;
 }
 
 std::vector<std::string> ModelRegistry::ids() const {
     std::vector<std::string> result;
     result.reserve(models_.size());
 
-    for (const auto& [id, manifest] : models_) {
-        static_cast<void>(manifest);
+    for (const auto& [id, entry] : models_) {
+        static_cast<void>(entry);
         result.push_back(id);
+    }
+
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
+std::vector<std::string> ModelRegistry::verified_ids() const {
+    std::vector<std::string> result;
+    result.reserve(models_.size());
+
+    for (const auto& [id, entry] : models_) {
+        if (entry.verified) {
+            result.push_back(id);
+        }
     }
 
     std::sort(result.begin(), result.end());
