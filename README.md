@@ -7,17 +7,28 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 ## L0 — Ring Foundation
 
-The first implementation deliberately starts below models and UI:
-
-- `RealityStack` — explicit coordinates for physical, OS, runtime, project, application, simulation, semantic, memory, meta and representation layers.
+- `RealityStack` — explicit physical, OS, runtime, project, application, simulation, semantic, memory, meta and representation coordinates.
 - `Caddy` — routes work toward tiny/core/deep local inference, deterministic tools or human review.
 - `Recursor` — bounded recursive refinement with hard depth/step/confidence stops.
 - native C++20, no third-party runtime dependency.
+
+## L1 — Pristine Model Identity
+
+The Ring now has a cryptographic club registry:
+
+- `ModelManifest` — architecture, family, parameter count, GGUF/weight format, quantization, provenance, licensing, hardware requirements and capability metadata.
+- immutable `guff:model:sha256:<digest>` model IDs derived from canonical manifest identity.
+- streaming SHA-256 for multi-gigabyte weights without loading them into RAM.
+- exact file-size + digest verification before trusted admission.
+- `ModelRegistry` with validated and verified registration paths.
+- upstream source revision + SHA lineage so a derived GGUF can be traced back to its pristine master.
 
 ```text
 Reality -> Caddy -> Recursor -> Verify
    ^                              |
    +------------ delta -----------+
+
+pristine master -> provenance -> GGUF -> SHA-256 -> MODEL-ID -> Registry
 ```
 
 ## Design laws
@@ -28,6 +39,7 @@ Reality -> Caddy -> Recursor -> Verify
 4. **Tools beat guessing.** Deterministic operations route to deterministic tools when possible.
 5. **Symbiosis is permissioned.** User authority is the root authority.
 6. **Aesthetics never corrupt semantics.** CHROMA/AURA/GLYPH remain presentation metadata.
+7. **Model identity is cryptographic.** A filename never establishes trust.
 
 ## Build
 
@@ -39,4 +51,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L1 adds model manifests, pristine-weight provenance and SHA-256 verification so every future GGUF loaded by the Ring has a reproducible identity.
+L2 adds the first SCORECARD hardware fingerprint and benchmark record so CADDY can route models by measured latency, memory cost and task success instead of model-name vibes.
