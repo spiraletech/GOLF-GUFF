@@ -14,87 +14,61 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 ## L1 — Pristine Model Identity
 
-- `ModelManifest` — architecture, family, parameter count, format, quantization, provenance, licensing, hardware requirements and capability metadata.
-- immutable `guff:model:sha256:<digest>` model IDs derived from canonical manifest identity.
-- streaming SHA-256 for multi-gigabyte weights without loading them into RAM.
-- exact file-size + digest verification before trusted admission.
-- `ModelRegistry` tracks validated manifests separately from cryptographically verified model files.
+- cryptographic model manifests, provenance, licensing and hardware contracts.
+- immutable `guff:model:sha256:<digest>` identities and streaming SHA-256 verification.
 
 ## L2 — SCORECARD Foundation
 
-- `HardwareProfile` provides immutable machine identity.
-- `BenchmarkRecord` captures task-specific latency, throughput, memory, quality, tool, verifier and retry telemetry.
-- `ScorecardEvaluator` produces weighted quality/speed/memory/reliability/energy scores.
+- immutable hardware identity plus task-specific quality, latency, memory, reliability and optional energy telemetry.
 
 ## L3 — CADDY × SCORECARD Fusion
 
-- `CaddyRouter` selects only from eligible, measured, verified models.
-- deterministic work stays with deterministic tools and risky destructive work still escalates to human review.
-- absent evidence produces an explicit refusal state.
+- measured, verified, hardware-compatible club selection with explicit refusal states.
 
 ## L4 — Persistent SCORECARD + Route Trace
 
-- `ScorecardStore` keeps the benchmark corpus cold in an append-only journal.
-- selective hydration retains only the strongest bounded task/hardware/profile slice.
-- `RouteTrace` explains routing gates with a hard 64-entry cap.
+- append-only cold benchmark journal, bounded strongest-N hydration and explainable route traces.
 
 ## L5 — DATA LEECH + Context Slices
 
-- `SourceGrant` is the explicit permission contract for a source.
-- grants distinguish file, repo-file and tool-output sources plus session/project/device-local scope.
-- file grants resolve paths and prevent reads outside the permitted root.
-- tool-output grants enforce an explicit logical locator prefix.
-- `SourceObservation` stores only source identity, locator, STRATA layer, byte size and SHA-256 content digest.
-- compact previous observations enable `FIRST_SEEN`, `UNCHANGED` and `MODIFIED` delta detection without retaining source bodies.
-- `ContextSlice` rehydrates only requested bytes and carries content hash + offset provenance.
-- `ContextArena` bounds hot slice count and aggregate bytes, rejects duplicates, and can be cleared at task end.
+- permissioned file/repo/tool-output observation, SHA-256 deltas and disposable bounded context arenas.
 
 ## L6 — SYMBIOSIS LEDGER
 
-The Ring can now maintain an inspectable boundary between permission, observation and memory:
+- grant lifecycle, revocation/expiry, bounded observation stamps and explicit reversible ORGANIC-facing memory promotion.
 
-- `SymbiosisGrant` wraps a `SourceGrant` with issue/expiry timestamps and explicit retention policy.
-- grant lifecycle is `PENDING`, `ACTIVE`, `REVOKED`, `EXPIRED` or `MISSING`.
-- session-only grants may remain entirely ephemeral; persistent grants use an append-only ledger journal.
-- observation stamps retain only grant ID, source ID, SHA-256, byte size, STRATA layer and observation time.
-- per-grant stamp counts are bounded; old hot stamps are evicted instead of growing without limit.
-- persistent observation stamps require a persistent grant.
-- memory promotion is separately permissioned and stores only an explicit compact summary, never the original source body.
-- promotion requires a matching prior observation stamp for the exact source identity + content hash.
-- promoted memory receives an immutable `guff:memory:sha256:<digest>` identity.
-- promotions are inspectable and can be explicitly forgotten; forgetting is also journaled when persistence is enabled.
-- replay reconstructs only persistent authority/stamps/promotions from the compact event journal.
+## L7 — ZENKAI Verification Loop
+
+The Ring can now run bounded self-correction attempts without hiding why another attempt was permitted:
+
+- `ZenkaiLoop` orchestrates attempt → evidence → verification → retry/stop.
+- the first attempt is always evaluable, but attempts after the first require explicit `RetryAuthority::Bounded`.
+- evidence is typed as build, test, tool or verifier evidence.
+- tool-event count, evidence-item count, evidence bytes, attempt count and trace length all have hard limits.
+- evidence detail strings are clipped before accounting so giant logs cannot become a hidden memory sink.
+- verifier success alone is insufficient; `passed=true` must also meet the configured confidence threshold.
+- `NO_NEW_INFORMATION`, `FATAL_FAILURE`, `ATTEMPT_BUDGET`, `TOOL_BUDGET`, `EVIDENCE_BUDGET` and `RETRY_NOT_AUTHORIZED` are explicit stop reasons.
+- ZENKAI does not execute commands by itself. The caller supplies an attempt function that returns bounded evidence and a verifier outcome.
 
 ```text
-USER AUTHORITY
-      |
-      v
- SYMBIOSIS GRANT
- issue / expiry / retention
-      |
-      +------ revoke / expire ------> INACTIVE
-      |
-      v
-  DATA LEECH
-      |
-      v
- SOURCE OBSERVATION
- hash + size + layer
-      |
-      v
- OBSERVATION STAMP
- bounded / optionally persistent
-      |
-      +---- no promotion authority ----> STOP
-      |
-      v
- EXPLICIT PROMOTION
- compact summary only
-      |
-      v
- ORGANIC-FACING MEMORY ID
-      |
-      +---- forget ----> tombstoned
+INITIAL CANDIDATE
+       |
+       v
+   ATTEMPT #1
+       |
+       +---- build/test/tool evidence
+       |
+       v
+    VERIFIER
+       |
+       +---- pass + confidence threshold ----> VERIFIED
+       |
+       +---- fatal / no-new-info / budget ---> STOP
+       |
+       +---- retry authority? no ------------> STOP
+       |
+       v yes
+   ATTEMPT #2 ... bounded
 ```
 
 ## Design laws
@@ -115,6 +89,9 @@ USER AUTHORITY
 14. **Observation is not memory.** Seeing a source never silently promotes it into ORGANIC.
 15. **Authority has lifecycle.** Grants can be pending, revoked or expired and are checked at action time.
 16. **Promotion is explicit and reversible.** Only permitted, stamped facts may be promoted, and promoted summaries can be forgotten.
+17. **Retries require authority.** A failed attempt does not automatically grant another execution attempt.
+18. **Verification requires evidence.** Success is not accepted solely because a model says it succeeded.
+19. **Self-correction is budgeted.** Attempts, tools, evidence and traces all have hard ceilings.
 
 ## Build
 
@@ -126,4 +103,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L7 should add the first ZENKAI verification loop: bounded attempt records, tool/compile/test evidence, verifier outcomes and retry policy so recursion can improve a result without hiding why another attempt was allowed.
+L8 should add the first DOJO trace store: compact success/failure episodes from routes and ZENKAI runs, content-addressed outcomes and bounded replay data suitable for later SCORECARD learning, routing improvement and adapter training without retaining raw working context.
