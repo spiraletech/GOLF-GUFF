@@ -126,24 +126,39 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 - capability/scope/fingerprint mismatches fail before backing voucher consumption.
 - upstream key/receipt/ancestor revocation automatically invalidates the session key because the backing voucher must still cross the ordinary authority gate.
 
+## L20 — Runtime Binding / Capability Leases
+
+- a delegated L19 session key signs a content-addressed `guff:lease:sha256:<digest>` runtime capability lease.
+- every lease binds the exact hardware identity, executable SHA-256, process-instance SHA-256, CLUBHOUSE slot, immutable session ID and STRATA layer.
+- lease capability, expiry and use count must fit inside the backing session-key branch.
+- `RuntimeLeaseAuthorityGate` validates runtime coordinates before spending any session-key or backing-voucher authority.
+- wrong device, executable, process instance, slot, session or layer is refused without consuming upstream authority.
+- `RuntimeLeaseLedger` durably records lease registration, use and revocation in its own SHA-256 chain.
+- process identity uses device + executable + process ID + process start time + runtime nonce; PID alone is never treated as identity.
+- runtime coordinates must come from a trusted local observer; L20 defines binding/enforcement, not remote attestation by itself.
+
 ```text
 MASTER AUTHORITY
       |
-      | L18 attenuate
       v
-BACKING VOUCHER
+L18 BACKING VOUCHER
       |
-      | root signs key handoff
       v
-EPHEMERAL KEY CERTIFICATE
+L19 EPHEMERAL SESSION KEY
       |
-      | child key signs
+      | signs exact runtime coordinate
       v
-SESSION-KEY RECEIPT
+L20 CAPABILITY LEASE
       |
-      | every use
+      | device + image + process + slot + session + STRATA
       v
-L18 VOUCHER GATE + L19 CHILD LEDGER
+RUNTIME PREFLIGHT
+      |
+      v
+L19/L18 AUTHORITY CONSUMPTION
+      |
+      v
+L20 DURABLE LEASE USE
       |
       v
  ALLOW / REFUSE
@@ -211,6 +226,13 @@ L18 VOUCHER GATE + L19 CHILD LEDGER
 58. **Every session-key use spends backing authority.** A child cannot create more uses than its L18 voucher owns.
 59. **One ephemeral key cannot union branches.** Reusing one key for independent authority branches is refused.
 60. **Session-key state is durable and fail-closed.** Broken replay, revocation or storage failure never becomes authorization.
+61. **A session key is not portable runtime authority.** A valid key can still be unusable outside its leased environment.
+62. **PID is not process identity.** Runtime identity includes executable, process start, device and nonce.
+63. **Runtime mismatch burns no upstream authority.** Coordinate validation precedes L19/L18 consumption.
+64. **Runtime leases attenuate session keys.** Capability, lifetime and uses cannot exceed the backing branch.
+65. **Lease use is durable before side effects.** Both backing authority and runtime lease use must be recorded.
+66. **Runtime observation is evidence.** Untrusted request fields cannot self-assert device/process identity.
+67. **Lease revocation is independent.** A runtime lease can be killed without revoking the broader session key.
 
 ## Build
 
@@ -222,4 +244,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L20 should bind delegated session-key authority to concrete runtime coordinates such as a specific device, process, executable binding or transaction/session identity, so a valid key packet cannot be replayed from the wrong execution environment.
+L21 should add a trusted runtime attestation provider interface that measures the local device, executable image and process instance instead of accepting those coordinates from application code, while preserving L20's exact lease contract.
