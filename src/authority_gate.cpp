@@ -12,8 +12,8 @@ bool AuthorityGateResult::ok() const noexcept {
     return status == AuthorityGateStatus::Allowed;
 }
 
-AuthorityGate::AuthorityGate(const AuthorityVerifier& verifier) noexcept
-    : verifier_(verifier) {}
+AuthorityGate::AuthorityGate(AuthorityLedger& ledger) noexcept
+    : ledger_(ledger) {}
 
 AuthorityGateResult AuthorityGate::authorize(
     const std::optional<AuthorityReceipt>& receipt,
@@ -27,19 +27,27 @@ AuthorityGateResult AuthorityGate::authorize(
         return result;
     }
     result.receipt_id = receipt->receipt_id;
-    const auto verified = verify_authority_receipt(
-        *receipt, verifier_, purpose, subject_id);
-    if (!verified.ok()) {
-        result.status = AuthorityGateStatus::ReceiptRejected;
-        result.errors = verified.errors;
-        return result;
-    }
     if (receipt->envelope.scope_sha256 != scope_sha256) {
         result.status = AuthorityGateStatus::ScopeMismatch;
         result.errors.emplace_back("authority receipt scope does not match privileged operation");
         return result;
     }
-    result.status = AuthorityGateStatus::Allowed;
+
+    const auto ledger_result = ledger_.authorize_and_consume(
+        *receipt, purpose, subject_id, scope_sha256);
+    result.ledger_status = ledger_result.status;
+    result.use_count = ledger_result.use_count;
+    result.errors = ledger_result.errors;
+    if (ledger_result.ok()) {
+        result.status = AuthorityGateStatus::Allowed;
+        return result;
+    }
+    if (ledger_result.status == AuthorityLedgerStatus::Invalid ||
+        ledger_result.status == AuthorityLedgerStatus::SignerUnknown) {
+        result.status = AuthorityGateStatus::ReceiptRejected;
+    } else {
+        result.status = AuthorityGateStatus::LedgerRejected;
+    }
     return result;
 }
 
@@ -102,6 +110,7 @@ GatedExecutionResult AuthorityGatedExecutionSession::run(
         if (!result.authority.ok()) return result;
     } else {
         result.authority.status = AuthorityGateStatus::Allowed;
+        result.authority.ledger_status = AuthorityLedgerStatus::Allowed;
     }
     result.session = orchestrator_.run(request, hardware, executor);
     return result;
@@ -141,6 +150,7 @@ std::string_view to_string(AuthorityGateStatus status) noexcept {
     case AuthorityGateStatus::ReceiptMissing: return "RECEIPT_MISSING";
     case AuthorityGateStatus::ReceiptRejected: return "RECEIPT_REJECTED";
     case AuthorityGateStatus::ScopeMismatch: return "SCOPE_MISMATCH";
+    case AuthorityGateStatus::LedgerRejected: return "LEDGER_REJECTED";
     }
     return "RECEIPT_REJECTED";
 }
