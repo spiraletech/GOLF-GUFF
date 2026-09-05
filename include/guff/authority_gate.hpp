@@ -4,6 +4,7 @@
 #include "guff/execution_session.hpp"
 #include "guff/symbiosis_ledger.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
