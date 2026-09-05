@@ -9,7 +9,6 @@
 #include "guff/scorecard.hpp"
 #include "guff/sha256.hpp"
 
-#include <cassert>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -19,6 +18,15 @@
 #include <string>
 #include <thread>
 #include <utility>
+
+#define CHECK(expression)                                                                     \
+    do {                                                                                      \
+        if (!(expression)) {                                                                  \
+            std::cerr << "CHECK failed: " #expression << " @ " << __FILE__ << ':'          \
+                      << __LINE__ << '\n';                                                    \
+            return 1;                                                                         \
+        }                                                                                     \
+    } while (false)
 
 namespace {
 
@@ -131,10 +139,10 @@ int main(int argc, char** argv) {
 
     guff::ClubhouseRegistry clubhouse;
     const auto slot = compiler_slot();
-    assert(clubhouse.register_slot(slot));
+    CHECK(clubhouse.register_slot(slot));
 
     guff::NativeProcessRegistry processes;
-    assert(processes.bind(slot, binding_for(executable, root)));
+    CHECK(processes.bind(slot, binding_for(executable, root)));
     guff::NativeLocalProcessExecutor native(processes);
     guff::ForgeAdapter forge(clubhouse);
 
@@ -160,43 +168,45 @@ int main(int argc, char** argv) {
             };
         });
 
-    assert(success.succeeded());
-    assert(success.status == guff::SessionStatus::Completed);
-    assert(success.route.status == guff::ModelRouteStatus::DeterministicPreferred);
-    assert(success.slot_resolution.status == guff::InvocationStatus::Ready);
-    assert(success.zenkai.verified);
-    assert(success.zenkai.stop_reason == guff::ZenkaiStopReason::Verified);
-    assert(success.last_execution.has_value());
-    assert(success.last_execution->succeeded());
-    assert(success.last_execution->captured_output_sha256.size() == 64U);
-    assert(success.artifacts.size() == 1U);
-    assert(success.rejected_artifacts == 1U);
-    assert(success.promoted_artifact_bytes == 512U);
-    assert(success.dojo_episode_id.has_value());
-    assert(guff::is_sha256(success.audit_sha256));
-    assert(success.session_id.starts_with("guff:session:sha256:"));
-    assert(!success.events.empty());
-    assert(!success.events_truncated);
+    CHECK(success.succeeded());
+    CHECK(success.status == guff::SessionStatus::Completed);
+    CHECK(success.route.status == guff::ModelRouteStatus::DeterministicPreferred);
+    CHECK(success.slot_resolution.status == guff::InvocationStatus::Ready);
+    CHECK(success.zenkai.verified);
+    CHECK(success.zenkai.stop_reason == guff::ZenkaiStopReason::Verified);
+    CHECK(success.last_execution.has_value());
+    CHECK(success.last_execution->succeeded());
+    CHECK(success.last_execution->captured_output_sha256.size() == 64U);
+    CHECK(success.artifacts.size() == 1U);
+    CHECK(success.rejected_artifacts == 1U);
+    CHECK(success.promoted_artifact_bytes == 512U);
+    CHECK(success.dojo_episode_id.has_value());
+    CHECK(guff::is_sha256(success.audit_sha256));
+    CHECK(success.session_id.starts_with("guff:session:sha256:"));
+    CHECK(!success.events.empty());
+    CHECK(!success.events_truncated);
 
     guff::DojoQuery query;
     query.task = guff::TaskClass::Coding;
     const auto episodes = dojo.replay(query);
-    assert(episodes.size() == 1U);
-    assert(episodes.front().episode_id == *success.dojo_episode_id);
-    assert(episodes.front().verified);
+    CHECK(episodes.size() == 1U);
+    CHECK(success.dojo_episode_id.has_value());
+    CHECK(episodes.front().episode_id == *success.dojo_episode_id);
+    CHECK(episodes.front().verified);
     bool saw_correlation = false;
     bool saw_session = false;
     for (const auto& tag : episodes.front().tags) {
         if (tag == "correlation:corr-l12-001") saw_correlation = true;
         if (tag == "session:" + success.session_id) saw_session = true;
     }
-    assert(saw_correlation);
-    assert(saw_session);
+    CHECK(saw_correlation);
+    CHECK(saw_session);
 
     std::ifstream journal(root / "dojo.store");
+    CHECK(journal.good());
     const std::string journal_text((std::istreambuf_iterator<char>(journal)),
                                    std::istreambuf_iterator<char>());
-    assert(journal_text.find(literal_payload) == std::string::npos);
+    CHECK(journal_text.find(literal_payload) == std::string::npos);
     journal.close();
 
     auto retry_request = session_request("corr-l12-002", "fail-first");
@@ -209,29 +219,29 @@ int main(int argc, char** argv) {
             if (attempt != 1U) return std::nullopt;
             return forge_request("corr-l12-002", "attempt:1", "retry-ok");
         });
-    assert(retried.succeeded());
-    assert(retried.zenkai.attempts == 2U);
-    assert(retried.last_execution.has_value());
-    assert(retried.last_execution->exit_code == 0);
+    CHECK(retried.succeeded());
+    CHECK(retried.zenkai.attempts == 2U);
+    CHECK(retried.last_execution.has_value());
+    CHECK(retried.last_execution->exit_code == 0);
 
     auto bad_correlation = session_request("corr-l12-003", "ok");
     bad_correlation.forge_request.invocation.invocation_id = "different:attempt:0";
     const auto invalid = orchestrator.run(bad_correlation, hardware, native);
-    assert(invalid.status == guff::SessionStatus::InvalidRequest);
-    assert(!invalid.dojo_episode_id.has_value());
+    CHECK(invalid.status == guff::SessionStatus::InvalidRequest);
+    CHECK(!invalid.dojo_episode_id.has_value());
 
     auto denied = session_request("corr-l12-004", "ok");
     denied.forge_request = forge_request("corr-l12-004", "attempt:0", "ok", false);
     const auto rejected = orchestrator.run(denied, hardware, native);
-    assert(rejected.status == guff::SessionStatus::InvocationRejected);
-    assert(!rejected.dojo_episode_id.has_value());
+    CHECK(rejected.status == guff::SessionStatus::InvocationRejected);
+    CHECK(!rejected.dojo_episode_id.has_value());
 
     auto human = session_request("corr-l12-005", "ok");
     human.route_request.signal.destructive = true;
     human.route_request.signal.uncertainty = 0.80;
     const auto route_rejected = orchestrator.run(human, hardware, native);
-    assert(route_rejected.status == guff::SessionStatus::RouteRejected);
-    assert(route_rejected.route.status == guff::ModelRouteStatus::HumanReviewRequired);
+    CHECK(route_rejected.status == guff::SessionStatus::RouteRejected);
+    CHECK(route_rejected.route.status == guff::ModelRouteStatus::HumanReviewRequired);
 
     auto switched = session_request("corr-l12-006", "fail-first");
     const auto switch_rejected = orchestrator.run(
@@ -244,12 +254,12 @@ int main(int argc, char** argv) {
             retry.invocation.layer = guff::RealityLayer::Runtime;
             return retry;
         });
-    assert(switch_rejected.status == guff::SessionStatus::VerificationFailed);
-    assert(switch_rejected.zenkai.stop_reason == guff::ZenkaiStopReason::FatalFailure);
-    assert(switch_rejected.dojo_episode_id.has_value());
+    CHECK(switch_rejected.status == guff::SessionStatus::VerificationFailed);
+    CHECK(switch_rejected.zenkai.stop_reason == guff::ZenkaiStopReason::FatalFailure);
+    CHECK(switch_rejected.dojo_episode_id.has_value());
 
     const auto all_episodes = dojo.replay();
-    assert(all_episodes.size() == 3U);
+    CHECK(all_episodes.size() == 3U);
 
     std::filesystem::remove_all(root, ec);
     return 0;
