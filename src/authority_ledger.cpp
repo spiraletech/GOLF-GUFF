@@ -6,6 +6,7 @@
 #include <charconv>
 #include <chrono>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <system_error>
 #include <utility>
@@ -92,6 +93,15 @@ std::uint64_t system_now_ms() {
         std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
 }
 
+bool strict_delegation_attenuation(const AuthorityReceipt& parent,
+                                   const AuthorityReceipt& child) {
+    return child.envelope.scope_path != parent.envelope.scope_path ||
+           child.envelope.capabilities.size() < parent.envelope.capabilities.size() ||
+           child.envelope.expires_at_unix_ms < parent.envelope.expires_at_unix_ms ||
+           child.envelope.max_uses < parent.envelope.max_uses ||
+           child.envelope.max_delegation_depth < parent.envelope.max_delegation_depth;
+}
+
 } // namespace
 
 bool AuthorityLedgerResult::ok() const noexcept {
@@ -167,6 +177,24 @@ std::optional<TrustedSignerKey> AuthorityLedger::find_key(
     const auto it = keys_.find(key_map_id(signer_id, key_id));
     if (it == keys_.end()) return std::nullopt;
     return it->second.key;
+}
+
+bool AuthorityLedger::ancestor_revoked(std::string_view receipt_id,
+                                       std::uint64_t now,
+                                       std::string* revoked_ancestor) const {
+    std::string current(receipt_id);
+    for (std::size_t depth = 0U; depth < 9U; ++depth) {
+        const auto parent = delegation_parent_.find(current);
+        if (parent == delegation_parent_.end()) return false;
+        const auto revoked = revoked_receipts_.find(parent->second);
+        if (revoked != revoked_receipts_.end() && now >= revoked->second) {
+            if (revoked_ancestor) *revoked_ancestor = parent->second;
+            return true;
+        }
+        current = parent->second;
+    }
+    if (revoked_ancestor) *revoked_ancestor = "delegation-lineage-cycle-or-depth-overflow";
+    return true;
 }
 
 AuthorityLedgerResult AuthorityLedger::trust_key(TrustedSignerKey key) {
@@ -300,6 +328,160 @@ AuthorityLedgerResult AuthorityLedger::revoke_receipt(std::string_view receipt_i
     return result;
 }
 
+AuthorityLedgerResult AuthorityLedger::register_delegation(
+    const AuthorityReceipt& parent,
+    const AuthorityReceipt& child) {
+    AuthorityLedgerResult result;
+    result.receipt_id = child.receipt_id;
+    if (!healthy_) {
+        result.status = AuthorityLedgerStatus::Corrupt;
+        result.errors = errors_;
+        return result;
+    }
+    if (parent.envelope.schema_version != 3U || child.envelope.schema_version != 3U) {
+        result.status = AuthorityLedgerStatus::DelegationRejected;
+        result.errors.emplace_back("delegation requires schema v3 parent and child receipts");
+        return result;
+    }
+    const auto parent_verified = verify_authority_receipt(
+        parent, verifier_, parent.envelope.purpose, parent.envelope.subject_id);
+    const auto child_verified = verify_authority_receipt(
+        child, verifier_, child.envelope.purpose, child.envelope.subject_id);
+    if (!parent_verified.ok() || !child_verified.ok()) {
+        result.status = AuthorityLedgerStatus::DelegationRejected;
+        result.errors = !parent_verified.ok() ? parent_verified.errors : child_verified.errors;
+        return result;
+    }
+    if (child.envelope.parent_receipt_id != parent.receipt_id ||
+        child.envelope.delegation_depth != parent.envelope.delegation_depth + 1U ||
+        parent.envelope.delegation_depth >= parent.envelope.max_delegation_depth ||
+        child.envelope.delegation_depth > child.envelope.max_delegation_depth ||
+        child.envelope.max_delegation_depth > parent.envelope.max_delegation_depth) {
+        result.status = AuthorityLedgerStatus::DelegationRejected;
+        result.errors.emplace_back("delegation lineage/depth contract is invalid");
+        return result;
+    }
+    if (parent.envelope.purpose != child.envelope.purpose ||
+        parent.envelope.subject_id != child.envelope.subject_id ||
+        parent.envelope.signer_id != child.envelope.signer_id ||
+        parent.envelope.signer_key_id != child.envelope.signer_key_id ||
+        parent.algorithm != child.algorithm) {
+        result.status = AuthorityLedgerStatus::DelegationRejected;
+        result.errors.emplace_back("delegation cannot change purpose, subject, signer key, or algorithm");
+        return result;
+    }
+    if (!authority_scope_contains(parent.envelope.scope_path, child.envelope.scope_path) ||
+        !authority_capabilities_contain(parent.envelope.capabilities, child.envelope.capabilities)) {
+        result.status = AuthorityLedgerStatus::DelegationRejected;
+        result.errors.emplace_back("delegated scope/capabilities would amplify parent authority");
+        return result;
+    }
+    if (child.envelope.issued_at_unix_ms < parent.envelope.issued_at_unix_ms ||
+        child.envelope.expires_at_unix_ms > parent.envelope.expires_at_unix_ms ||
+        child.envelope.expires_at_unix_ms <= child.envelope.issued_at_unix_ms ||
+        !strict_delegation_attenuation(parent, child)) {
+        result.status = AuthorityLedgerStatus::DelegationRejected;
+        result.errors.emplace_back("delegation must be strictly attenuated in scope, capability, lifetime, uses, or delegation depth");
+        return result;
+    }
+    if (delegation_parent_.contains(child.receipt_id) || use_count(child.receipt_id) != 0U) {
+        result.status = AuthorityLedgerStatus::Duplicate;
+        result.errors.emplace_back("delegated child receipt is already registered or consumed");
+        return result;
+    }
+    if (!parent.envelope.parent_receipt_id.empty()) {
+        const auto registered_parent = delegation_parent_.find(parent.receipt_id);
+        if (registered_parent == delegation_parent_.end() ||
+            registered_parent->second != parent.envelope.parent_receipt_id) {
+            result.status = AuthorityLedgerStatus::DelegationRejected;
+            result.errors.emplace_back("delegated parent is not registered in authority lineage");
+            return result;
+        }
+    }
+
+    const auto key = find_key(parent.envelope.signer_id, parent.envelope.signer_key_id);
+    if (!key || key->algorithm != parent.algorithm) {
+        result.status = AuthorityLedgerStatus::SignerUnknown;
+        result.errors.emplace_back("delegation signer key is not trusted");
+        return result;
+    }
+    const auto now = now_ms();
+    if (parent.envelope.issued_at_unix_ms > now || child.envelope.issued_at_unix_ms > now ||
+        parent.envelope.issued_at_unix_ms < key->valid_from_unix_ms ||
+        (key->valid_until_unix_ms != 0U && parent.envelope.issued_at_unix_ms >= key->valid_until_unix_ms) ||
+        (key->valid_until_unix_ms != 0U && child.envelope.issued_at_unix_ms >= key->valid_until_unix_ms) ||
+        (key->revoked_at_unix_ms != 0U && now >= key->revoked_at_unix_ms)) {
+        result.status = AuthorityLedgerStatus::KeyInactive;
+        result.errors.emplace_back("delegation signer key is inactive for parent/child issuance");
+        return result;
+    }
+    if (now >= parent.envelope.expires_at_unix_ms || now >= child.envelope.expires_at_unix_ms) {
+        result.status = AuthorityLedgerStatus::ReceiptExpired;
+        result.errors.emplace_back("parent or child authority has expired");
+        return result;
+    }
+    if (receipt_revoked(parent.receipt_id) || receipt_revoked(child.receipt_id) ||
+        ancestor_revoked(parent.receipt_id, now)) {
+        result.status = AuthorityLedgerStatus::ReceiptRevoked;
+        result.errors.emplace_back("parent, child, or delegation ancestor has been revoked");
+        return result;
+    }
+
+    const std::string parent_nonce_key = parent.envelope.signer_id + "\n" +
+                                         parent.envelope.signer_key_id + "\n" +
+                                         parent.envelope.nonce;
+    const std::string child_nonce_key = child.envelope.signer_id + "\n" +
+                                        child.envelope.signer_key_id + "\n" +
+                                        child.envelope.nonce;
+    const auto parent_nonce = nonce_receipts_.find(parent_nonce_key);
+    const auto child_nonce = nonce_receipts_.find(child_nonce_key);
+    if ((parent_nonce != nonce_receipts_.end() && parent_nonce->second != parent.receipt_id) ||
+        (child_nonce != nonce_receipts_.end() && child_nonce->second != child.receipt_id)) {
+        result.status = AuthorityLedgerStatus::NonceReplay;
+        result.errors.emplace_back("delegation parent or child nonce is bound to a different receipt");
+        return result;
+    }
+
+    const auto used = use_count(parent.receipt_id);
+    const auto reserved = delegated_uses(parent.receipt_id);
+    const std::size_t needed = 1U + static_cast<std::size_t>(child.envelope.max_uses);
+    if (used > parent.envelope.max_uses || reserved > parent.envelope.max_uses ||
+        needed > parent.envelope.max_uses ||
+        used + reserved > parent.envelope.max_uses - needed) {
+        result.status = AuthorityLedgerStatus::UseLimitReached;
+        result.use_count = used;
+        result.errors.emplace_back("parent has insufficient uncommitted use budget for delegation");
+        return result;
+    }
+
+    const std::size_t next_parent_use = used + 1U;
+    std::ostringstream body;
+    body << "D\t" << hex_encode(parent.receipt_id)
+         << '\t' << hex_encode(child.receipt_id)
+         << '\t' << hex_encode(parent.envelope.signer_id)
+         << '\t' << hex_encode(parent.envelope.signer_key_id)
+         << '\t' << hex_encode(parent.envelope.nonce)
+         << '\t' << hex_encode(child.envelope.nonce)
+         << '\t' << next_parent_use
+         << '\t' << child.envelope.max_uses
+         << '\t' << now;
+    std::string error;
+    if (!append_event(body.str(), &error)) {
+        result.status = AuthorityLedgerStatus::StorageError;
+        result.errors.push_back(std::move(error));
+        return result;
+    }
+
+    receipt_uses_[parent.receipt_id] = next_parent_use;
+    delegated_uses_[parent.receipt_id] = reserved + child.envelope.max_uses;
+    nonce_receipts_[parent_nonce_key] = parent.receipt_id;
+    nonce_receipts_[child_nonce_key] = child.receipt_id;
+    delegation_parent_[child.receipt_id] = parent.receipt_id;
+    result.status = AuthorityLedgerStatus::Allowed;
+    result.use_count = next_parent_use;
+    return result;
+}
+
 AuthorityLedgerResult AuthorityLedger::authorize_and_consume(
     const AuthorityReceipt& receipt,
     AuthorityPurpose expected_purpose,
@@ -327,10 +509,18 @@ AuthorityLedgerResult AuthorityLedger::authorize_and_consume(
         result.errors.emplace_back("authority receipt scope does not match requested operation");
         return result;
     }
-    if (receipt.envelope.schema_version != 2U) {
+    if (receipt.envelope.schema_version != 2U && receipt.envelope.schema_version != 3U) {
         result.status = AuthorityLedgerStatus::Invalid;
-        result.errors.emplace_back("privileged authority consumption requires receipt schema v2");
+        result.errors.emplace_back("privileged authority consumption requires receipt schema v2 or v3");
         return result;
+    }
+    if (receipt.envelope.schema_version == 3U && !receipt.envelope.parent_receipt_id.empty()) {
+        const auto lineage = delegation_parent_.find(receipt.receipt_id);
+        if (lineage == delegation_parent_.end() || lineage->second != receipt.envelope.parent_receipt_id) {
+            result.status = AuthorityLedgerStatus::DelegationRejected;
+            result.errors.emplace_back("delegated receipt is not registered in authority lineage");
+            return result;
+        }
     }
 
     const auto key = find_key(receipt.envelope.signer_id, receipt.envelope.signer_key_id);
@@ -369,6 +559,12 @@ AuthorityLedgerResult AuthorityLedger::authorize_and_consume(
         result.errors.emplace_back("authority receipt has been revoked");
         return result;
     }
+    std::string revoked_ancestor;
+    if (ancestor_revoked(receipt.receipt_id, now, &revoked_ancestor)) {
+        result.status = AuthorityLedgerStatus::ReceiptRevoked;
+        result.errors.emplace_back("delegation ancestor has been revoked: " + revoked_ancestor);
+        return result;
+    }
 
     const std::string nonce_key = receipt.envelope.signer_id + "\n" +
                                   receipt.envelope.signer_key_id + "\n" +
@@ -381,10 +577,13 @@ AuthorityLedgerResult AuthorityLedger::authorize_and_consume(
     }
 
     const auto current_uses = use_count(receipt.receipt_id);
-    if (current_uses >= receipt.envelope.max_uses) {
+    const auto reserved = delegated_uses(receipt.receipt_id);
+    if (current_uses > receipt.envelope.max_uses ||
+        reserved > receipt.envelope.max_uses ||
+        current_uses + reserved >= receipt.envelope.max_uses) {
         result.status = AuthorityLedgerStatus::UseLimitReached;
         result.use_count = current_uses;
-        result.errors.emplace_back("authority receipt use limit reached");
+        result.errors.emplace_back("authority receipt uncommitted use limit reached");
         return result;
     }
 
@@ -413,8 +612,10 @@ AuthorityLedgerResult AuthorityLedger::authorize_and_consume(
 bool AuthorityLedger::replay(std::vector<std::string>* errors) {
     keys_.clear();
     receipt_uses_.clear();
+    delegated_uses_.clear();
     revoked_receipts_.clear();
     nonce_receipts_.clear();
+    delegation_parent_.clear();
     sequence_ = 0U;
     last_record_sha256_.clear();
     healthy_ = true;
@@ -525,6 +726,43 @@ bool AuthorityLedger::replay(std::vector<std::string>* errors) {
                     nonce_receipts_[nonce_key] = *receipt_id;
                 }
             }
+        } else if (type == "D" && fields.size() == 13U) {
+            auto parent_id = hex_decode(fields[3]);
+            auto child_id = hex_decode(fields[4]);
+            auto signer = hex_decode(fields[5]);
+            auto key_id = hex_decode(fields[6]);
+            auto parent_nonce = hex_decode(fields[7]);
+            auto child_nonce = hex_decode(fields[8]);
+            std::size_t parent_use = 0U;
+            std::size_t reserved_uses = 0U;
+            std::uint64_t at = 0U;
+            event_ok = parent_id && child_id && signer && key_id && parent_nonce && child_nonce &&
+                       valid_receipt_id(*parent_id) && valid_receipt_id(*child_id) &&
+                       parse_unsigned(fields[9], &parent_use) && parent_use != 0U &&
+                       parse_unsigned(fields[10], &reserved_uses) && reserved_uses != 0U &&
+                       parse_unsigned(fields[11], &at) && at != 0U &&
+                       !delegation_parent_.contains(*child_id);
+            if (event_ok) {
+                const auto expected_use = use_count(*parent_id) + 1U;
+                const std::string parent_nonce_key = *signer + "\n" + *key_id + "\n" + *parent_nonce;
+                const std::string child_nonce_key = *signer + "\n" + *key_id + "\n" + *child_nonce;
+                const auto existing_parent_nonce = nonce_receipts_.find(parent_nonce_key);
+                const auto existing_child_nonce = nonce_receipts_.find(child_nonce_key);
+                event_ok = parent_use == expected_use &&
+                           (existing_parent_nonce == nonce_receipts_.end() ||
+                            existing_parent_nonce->second == *parent_id) &&
+                           (existing_child_nonce == nonce_receipts_.end() ||
+                            existing_child_nonce->second == *child_id) &&
+                           delegated_uses(*parent_id) <=
+                               std::numeric_limits<std::size_t>::max() - reserved_uses;
+                if (event_ok) {
+                    receipt_uses_[*parent_id] = parent_use;
+                    delegated_uses_[*parent_id] = delegated_uses(*parent_id) + reserved_uses;
+                    nonce_receipts_[parent_nonce_key] = *parent_id;
+                    nonce_receipts_[child_nonce_key] = *child_id;
+                    delegation_parent_[*child_id] = *parent_id;
+                }
+            }
         } else {
             event_ok = false;
         }
@@ -549,6 +787,7 @@ AuthorityLedgerInspection AuthorityLedger::inspect() const {
     inspection.trusted_keys = keys_.size();
     inspection.consumed_receipts = receipt_uses_.size();
     inspection.revoked_receipts = revoked_receipts_.size();
+    inspection.delegated_receipts = delegation_parent_.size();
     inspection.errors = errors_;
     return inspection;
 }
@@ -558,8 +797,24 @@ std::size_t AuthorityLedger::use_count(std::string_view receipt_id) const noexce
     return it == receipt_uses_.end() ? 0U : it->second;
 }
 
+std::size_t AuthorityLedger::delegated_uses(std::string_view receipt_id) const noexcept {
+    const auto it = delegated_uses_.find(std::string(receipt_id));
+    return it == delegated_uses_.end() ? 0U : it->second;
+}
+
 bool AuthorityLedger::receipt_revoked(std::string_view receipt_id) const noexcept {
     return revoked_receipts_.contains(std::string(receipt_id));
+}
+
+bool AuthorityLedger::delegation_registered(std::string_view child_receipt_id) const noexcept {
+    return delegation_parent_.contains(std::string(child_receipt_id));
+}
+
+std::optional<std::string> AuthorityLedger::delegation_parent(
+    std::string_view child_receipt_id) const {
+    const auto it = delegation_parent_.find(std::string(child_receipt_id));
+    if (it == delegation_parent_.end()) return std::nullopt;
+    return it->second;
 }
 
 const std::filesystem::path& AuthorityLedger::journal_path() const noexcept {
@@ -578,6 +833,7 @@ std::string_view to_string(AuthorityLedgerStatus status) noexcept {
     case AuthorityLedgerStatus::ReceiptRevoked: return "RECEIPT_REVOKED";
     case AuthorityLedgerStatus::NonceReplay: return "NONCE_REPLAY";
     case AuthorityLedgerStatus::UseLimitReached: return "USE_LIMIT_REACHED";
+    case AuthorityLedgerStatus::DelegationRejected: return "DELEGATION_REJECTED";
     case AuthorityLedgerStatus::StorageError: return "STORAGE_ERROR";
     case AuthorityLedgerStatus::Corrupt: return "CORRUPT";
     }
