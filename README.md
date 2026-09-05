@@ -95,37 +95,55 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 ## L16 — Authority Gate
 
 - privileged boundaries consume signed receipts rather than raw approval booleans.
-- recovery requires `RECOVERY` authority bound to the exact parent/decision scope.
-- destructive execution requires `DESTRUCTIVE_EXECUTION` authority bound to the exact session/request/slot/input contract.
-- persistent SYMBIOSIS requires `PERSISTENT_SYMBIOSIS` authority; ephemeral session-local grants remain receipt-free.
+- recovery, destructive execution and persistent SYMBIOSIS are purpose/subject/scope gated.
 - rejected receipts produce zero executor calls and zero durable grants.
 
 ## L17 — Authority Ledger / Replay + Revocation
 
-- receipt schema v2 cryptographically binds signer key ID, machine issue/expiry timestamps and signed `max_uses`.
-- `AuthorityLedger` maintains durable trusted signer-key metadata, key retirement/rotation, hard key revocation and receipt revocation.
-- `(signer, key, nonce)` is bound to the first consumed receipt ID; a different receipt reusing that nonce is rejected.
-- immutable receipt IDs have persistent bounded-use counters, including one-shot receipts.
+- receipt schema v2 binds signer key ID, machine issue/expiry timestamps and signed `max_uses`.
+- durable signer-key trust, rotation/retirement, hard key revocation, receipt revocation and nonce replay defense.
 - authority events are append-only and globally SHA-256 chained.
-- usage is durably recorded before `AuthorityGate` returns `ALLOWED`; storage/integrity failure blocks the privileged operation.
-- schema-v1 receipts remain statically verifiable but cannot cross L17 privileged boundaries because they do not contain signed lifetime/use policy.
+- use is durably recorded before `AuthorityGate` returns `ALLOWED`.
+
+## L18 — Authority Delegation / Attenuation
+
+- receipt schema v3 adds signed hierarchical `scope_path`, capability sets, parent receipt lineage and bounded delegation depth.
+- child scope, capabilities, lifetime, use count and future delegation depth may only stay equal or become narrower; at least one dimension must become stricter.
+- delegation consumes one parent use and reserves the child's full signed use budget, so authority cannot be cloned by branching.
+- unregistered delegated children are refused even if their signatures are valid.
+- ancestor receipt revocation propagates to descendants.
+- capability attenuation is enforced at `AuthorityGate`, not treated as documentation metadata.
+
+## L19 — Delegation Key Handoff / Session Keys
+
+- a normal L18 child receipt becomes a finite root-signed **backing voucher**.
+- a parent-signed `guff:key-handoff:sha256:<digest>` certificate binds that voucher to a different ephemeral signer/key fingerprint.
+- the ephemeral key signs its own `guff:session-key:sha256:<digest>` receipt for exactly the voucher's scope, capabilities, lifetime and use budget.
+- ephemeral keys are never promoted into the root `AuthorityLedger` trust store.
+- one ephemeral `(signer_id, key_id)` may back only one registered authority branch.
+- each successful session-key crossing first consumes one backing voucher use through L17/L18, then durably records one child use in `SessionKeyLedger`.
+- `SessionKeyLedger` is independently SHA-256 chained and persists handoff registration, child-use counts, key revocation and child-receipt revocation.
+- capability/scope/fingerprint mismatches fail before backing voucher consumption.
+- upstream key/receipt/ancestor revocation automatically invalidates the session key because the backing voucher must still cross the ordinary authority gate.
 
 ```text
-SPIRAL BARCODE
+MASTER AUTHORITY
       |
+      | L18 attenuate
       v
-L15 RECEIPT SIGNATURE
+BACKING VOUCHER
       |
+      | root signs key handoff
       v
-L16 PURPOSE / SUBJECT / SCOPE
+EPHEMERAL KEY CERTIFICATE
       |
+      | child key signs
       v
-L17 AUTHORITY LEDGER
-  | key active?
-  | not expired?
-  | not revoked?
-  | nonce valid?
-  | uses remaining?
+SESSION-KEY RECEIPT
+      |
+      | every use
+      v
+L18 VOUCHER GATE + L19 CHILD LEDGER
       |
       v
  ALLOW / REFUSE
@@ -183,6 +201,16 @@ L17 AUTHORITY LEDGER
 48. **Nonce reuse cannot mint fresh authority.** A signer-key nonce may bind to only one immutable receipt identity.
 49. **Key rotation is explicit.** Retiring issuance and hard revocation are separate state transitions.
 50. **Barcode transport is never the trust root.** Scan integrity only delivers a receipt reference; the Ring decides whether it remains authorized.
+51. **Delegation attenuates; it never amplifies.** Child scope/capabilities/lifetime/uses/depth cannot exceed the parent.
+52. **Delegation consumes a finite budget.** Parent use plus reserved descendant uses cannot exceed signed parent authority.
+53. **Delegation lineage is durable.** A child that is not registered in the cold authority chain is not authorized.
+54. **Ancestor revocation propagates.** A valid child signature cannot outlive revoked parent authority.
+55. **Root signing material is never handed off.** Session keys use separate key identities.
+56. **Ephemeral keys are branch-bound, not root-trusted.** Their authority exists only through an exact registered voucher handoff.
+57. **Key identity includes key material.** A signer/key label without the signed SHA-256 fingerprint is insufficient.
+58. **Every session-key use spends backing authority.** A child cannot create more uses than its L18 voucher owns.
+59. **One ephemeral key cannot union branches.** Reusing one key for independent authority branches is refused.
+60. **Session-key state is durable and fail-closed.** Broken replay, revocation or storage failure never becomes authorization.
 
 ## Build
 
@@ -194,4 +222,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L18 should add authority delegation / attenuation: parent receipts may mint narrower child capabilities only when explicitly allowed, with monotonic scope reduction, shorter expiry, lower use budgets and auditable delegation lineage.
+L20 should bind delegated session-key authority to concrete runtime coordinates such as a specific device, process, executable binding or transaction/session identity, so a valid key packet cannot be replayed from the wrong execution environment.
