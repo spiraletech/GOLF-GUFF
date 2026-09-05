@@ -20,10 +20,25 @@ bool valid_token(std::string_view value, std::size_t max_bytes = 128U) noexcept 
     });
 }
 
+bool valid_receipt_id(std::string_view value) noexcept {
+    return value.starts_with(kReceiptPrefix) &&
+           is_sha256(value.substr(kReceiptPrefix.size()));
+}
+
+std::vector<std::string> canonical_capabilities(
+    const std::vector<std::string>& capabilities) {
+    auto copy = capabilities;
+    std::sort(copy.begin(), copy.end());
+    return copy;
+}
+
 std::vector<std::string> validate_envelope(const AuthorityEnvelope& envelope) {
     std::vector<std::string> errors;
-    if (envelope.schema_version != 1U && envelope.schema_version != 2U)
+    if (envelope.schema_version != 1U &&
+        envelope.schema_version != 2U &&
+        envelope.schema_version != 3U) {
         errors.emplace_back("unsupported authority envelope schema");
+    }
     if (!valid_token(envelope.subject_id, 256U))
         errors.emplace_back("subject_id must be a bounded token");
     if (envelope.actor_reference.empty() || envelope.actor_reference.size() > 256U)
@@ -37,15 +52,43 @@ std::vector<std::string> validate_envelope(const AuthorityEnvelope& envelope) {
     if (!is_sha256(envelope.scope_sha256))
         errors.emplace_back("scope_sha256 must be SHA-256");
 
-    if (envelope.schema_version == 2U) {
+    if (envelope.schema_version >= 2U) {
         if (!valid_token(envelope.signer_key_id, 128U))
-            errors.emplace_back("schema v2 signer_key_id must be a bounded token");
+            errors.emplace_back("schema v2+ signer_key_id must be a bounded token");
         if (envelope.issued_at_unix_ms == 0U)
-            errors.emplace_back("schema v2 issued_at_unix_ms must be non-zero");
+            errors.emplace_back("schema v2+ issued_at_unix_ms must be non-zero");
         if (envelope.expires_at_unix_ms <= envelope.issued_at_unix_ms)
-            errors.emplace_back("schema v2 expiry must be later than issue time");
+            errors.emplace_back("schema v2+ expiry must be later than issue time");
         if (envelope.max_uses == 0U || envelope.max_uses > 1024U)
-            errors.emplace_back("schema v2 max_uses must be in [1,1024]");
+            errors.emplace_back("schema v2+ max_uses must be in [1,1024]");
+    }
+
+    if (envelope.schema_version == 3U) {
+        if (!valid_token(envelope.scope_path, 512U))
+            errors.emplace_back("schema v3 scope_path must be a bounded hierarchical token");
+        if (envelope.scope_sha256 != sha256(envelope.scope_path))
+            errors.emplace_back("schema v3 scope_sha256 must equal SHA-256(scope_path)");
+        if (envelope.capabilities.empty() || envelope.capabilities.size() > 32U)
+            errors.emplace_back("schema v3 capabilities must contain 1-32 entries");
+        for (const auto& capability : envelope.capabilities) {
+            if (!valid_token(capability, 128U)) {
+                errors.emplace_back("schema v3 capability must be a bounded token");
+                break;
+            }
+        }
+        const auto canonical = canonical_capabilities(envelope.capabilities);
+        if (std::adjacent_find(canonical.begin(), canonical.end()) != canonical.end())
+            errors.emplace_back("schema v3 capabilities must be unique");
+        if (envelope.max_delegation_depth > 8U)
+            errors.emplace_back("schema v3 max_delegation_depth must be <= 8");
+        if (envelope.delegation_depth > envelope.max_delegation_depth)
+            errors.emplace_back("schema v3 delegation depth exceeds signed maximum");
+        if (envelope.delegation_depth == 0U) {
+            if (!envelope.parent_receipt_id.empty())
+                errors.emplace_back("schema v3 root receipt cannot name a parent receipt");
+        } else if (!valid_receipt_id(envelope.parent_receipt_id)) {
+            errors.emplace_back("schema v3 delegated receipt requires a canonical parent receipt id");
+        }
     }
     return errors;
 }
@@ -54,6 +97,26 @@ std::vector<std::string> validate_envelope(const AuthorityEnvelope& envelope) {
 
 bool AuthorityVerificationResult::ok() const noexcept {
     return status == AuthorityReceiptStatus::Valid;
+}
+
+bool authority_scope_contains(std::string_view parent_scope_path,
+                              std::string_view child_scope_path) noexcept {
+    if (parent_scope_path.empty() || child_scope_path.empty()) return false;
+    if (parent_scope_path == child_scope_path) return true;
+    if (!child_scope_path.starts_with(parent_scope_path)) return false;
+    if (child_scope_path.size() <= parent_scope_path.size()) return false;
+    if (parent_scope_path.back() == '/') return true;
+    return child_scope_path[parent_scope_path.size()] == '/';
+}
+
+bool authority_capabilities_contain(
+    const std::vector<std::string>& parent,
+    const std::vector<std::string>& child) {
+    if (parent.empty() || child.empty()) return false;
+    const auto parent_sorted = canonical_capabilities(parent);
+    const auto child_sorted = canonical_capabilities(child);
+    return std::includes(parent_sorted.begin(), parent_sorted.end(),
+                         child_sorted.begin(), child_sorted.end());
 }
 
 std::string canonical_authority_envelope(const AuthorityEnvelope& envelope) {
@@ -74,6 +137,17 @@ std::string canonical_authority_envelope(const AuthorityEnvelope& envelope) {
     }
     out << envelope.nonce << '\n'
         << envelope.scope_sha256;
+    if (envelope.schema_version == 3U) {
+        out << '\n' << envelope.parent_receipt_id
+            << '\n' << envelope.delegation_depth
+            << '\n' << envelope.max_delegation_depth
+            << '\n' << envelope.scope_path;
+        const auto capabilities = canonical_capabilities(envelope.capabilities);
+        out << '\n' << capabilities.size();
+        for (const auto& capability : capabilities) {
+            out << '\n' << capability;
+        }
+    }
     return out.str();
 }
 
