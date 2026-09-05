@@ -31,12 +31,14 @@ enum class DelegationStatus : std::uint8_t {
 struct DelegationRequest {
     AuthorityReceipt parent;
     std::string actor_reference;
+    std::string issued_at_utc;
     std::string nonce;
     std::string scope_path;
     std::vector<std::string> capabilities;
     std::uint64_t issued_at_unix_ms{0U};
     std::uint64_t expires_at_unix_ms{0U};
     std::uint32_t max_uses{1U};
+    // Zero means inherit the parent's already-signed absolute delegation ceiling.
     std::uint32_t max_delegation_depth{0U};
 };
 
