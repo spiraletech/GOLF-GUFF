@@ -1,25 +1,16 @@
 #pragma once
 
 #include "guff/authority_receipt.hpp"
+#include "guff/execution_session.hpp"
+#include "guff/symbiosis_ledger.hpp"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace guff {
-
-struct ExecutionSessionRequest;
-struct HardwareProfile;
-struct SymbiosisGrant;
-class ExecutionSessionOrchestrator;
-class SymbiosisLedger;
-struct ExecutionSessionResult;
-struct LedgerResult;
-class SlotManifest;
-class ForgeOutputSink;
-struct ForgeExecutionRequest;
-struct ForgeExecutorReport;
 
 enum class AuthorityGateStatus : std::uint8_t {
     Allowed,
@@ -73,10 +64,7 @@ public:
         const ExecutionSessionRequest& request,
         const HardwareProfile& hardware,
         const std::optional<AuthorityReceipt>& receipt,
-        const std::function<ForgeExecutorReport(
-            const SlotManifest&,
-            const ForgeExecutionRequest&,
-            ForgeOutputSink&)>& executor) const;
+        const ForgeAdapter::ExecutorFunction& executor) const;
 
 private:
     const AuthorityGate& gate_;
