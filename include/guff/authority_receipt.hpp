@@ -30,7 +30,11 @@ struct AuthorityEnvelope {
     std::string subject_id;
     std::string actor_reference;
     std::string signer_id;
+    std::string signer_key_id;
     std::string issued_at_utc;
+    std::uint64_t issued_at_unix_ms{0U};
+    std::uint64_t expires_at_unix_ms{0U};
+    std::uint32_t max_uses{0U};
     std::string nonce;
     std::string scope_sha256;
 };

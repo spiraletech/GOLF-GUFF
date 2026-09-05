@@ -20,10 +20,10 @@ namespace {
 
 class TestSigner final : public guff::AuthoritySigner, public guff::AuthorityVerifier {
 public:
-    std::string signer_id() const override { return "local:l16-test-signer"; }
+    std::string signer_id() const override { return "local:l17-gate-signer"; }
     std::string algorithm() const override { return "TEST-SHA256"; }
     std::optional<std::string> sign(std::string_view canonical) const override {
-        return guff::sha256(std::string("l16-secret\n") + std::string(canonical));
+        return guff::sha256(std::string("l17-gate-secret\n") + std::string(canonical));
     }
     bool knows(std::string_view signer, std::string_view algorithm_name) const override {
         return signer == signer_id() && algorithm_name == algorithm();
@@ -43,13 +43,19 @@ std::optional<guff::AuthorityReceipt> receipt_for(
     guff::AuthorityPurpose purpose,
     std::string subject,
     std::string scope,
-    std::string nonce) {
+    std::string nonce,
+    std::uint32_t max_uses = 1U) {
     guff::AuthorityEnvelope envelope;
+    envelope.schema_version = 2U;
     envelope.purpose = purpose;
     envelope.subject_id = std::move(subject);
-    envelope.actor_reference = "human:l16-regression";
+    envelope.actor_reference = "human:l17-gate-regression";
     envelope.signer_id = signer.signer_id();
-    envelope.issued_at_utc = "2026-09-05T02:00:00Z";
+    envelope.signer_key_id = "gate-key-v1";
+    envelope.issued_at_utc = "2026-09-05T03:00:00Z";
+    envelope.issued_at_unix_ms = 1'500U;
+    envelope.expires_at_unix_ms = 5'000U;
+    envelope.max_uses = max_uses;
     envelope.nonce = std::move(nonce);
     envelope.scope_sha256 = std::move(scope);
     return guff::issue_authority_receipt(envelope, signer);
@@ -62,7 +68,7 @@ guff::SlotManifest destructive_slot() {
     slot.version = "1.0.0";
     slot.kind = guff::SlotKind::Compiler;
     slot.transport = guff::SlotTransport::LocalProcess;
-    slot.entrypoint = "native://l16-test";
+    slot.entrypoint = "native://l17-test";
     slot.capabilities = {guff::SlotCapability::CodeBuild};
     slot.allowed_layers = {guff::RealityLayer::Project};
     slot.required_permissions = {"code:build", "device:execute"};
@@ -73,7 +79,7 @@ guff::SlotManifest destructive_slot() {
 guff::ExecutionSessionRequest destructive_request() {
     const std::string payload = "delete-and-rebuild-generated-cache";
     guff::ExecutionSessionRequest request;
-    request.correlation_id = "l16-destructive-001";
+    request.correlation_id = "l17-destructive-001";
     request.route_request.signal = {
         .intent = "destructive deterministic maintenance",
         .layer = guff::RealityLayer::Project,
@@ -83,8 +89,8 @@ guff::ExecutionSessionRequest destructive_request() {
         .destructive = true,
     };
     request.route_request.task = guff::TaskClass::Coding;
-    request.route_request.profile_name = "l16-authority-gate";
-    request.forge_request.invocation.invocation_id = "l16-destructive-001:attempt:0";
+    request.route_request.profile_name = "l17-authority-gate";
+    request.forge_request.invocation.invocation_id = "l17-destructive-001:attempt:0";
     request.forge_request.invocation.slot_id = "forge.destructive.test";
     request.forge_request.invocation.capability = guff::SlotCapability::CodeBuild;
     request.forge_request.invocation.layer = guff::RealityLayer::Project;
@@ -96,18 +102,18 @@ guff::ExecutionSessionRequest destructive_request() {
     request.forge_request.budget.max_output_bytes = 1024U;
     request.zenkai_budget.max_attempts = 1U;
     request.zenkai_policy.retry_authority = guff::RetryAuthority::None;
-    request.summary = "l16 destructive gate regression";
-    request.recorded_at_utc = "2026-09-05T02:00:00Z";
+    request.summary = "l17 destructive gate regression";
+    request.recorded_at_utc = "2026-09-05T03:00:00Z";
     return request;
 }
 
 guff::SymbiosisGrant persistent_grant() {
     guff::SymbiosisGrant grant;
-    grant.source.grant_id = "l16-persistent-grant";
+    grant.source.grant_id = "l17-persistent-grant";
     grant.source.kind = guff::SourceKind::ToolOutput;
     grant.source.scope = guff::GrantScope::Project;
     grant.source.layer = guff::RealityLayer::Runtime;
-    grant.source.locator_prefix = "tool://l16/";
+    grant.source.locator_prefix = "tool://l17/";
     grant.source.max_source_bytes = 4096U;
     grant.source.max_slice_bytes = 1024U;
     grant.retention.persist_grant = true;
@@ -122,14 +128,23 @@ guff::SymbiosisGrant persistent_grant() {
 } // namespace
 
 int main() {
-    TestSigner signer;
-    guff::AuthorityGate gate(signer);
-
     const auto root = std::filesystem::absolute(
-        std::filesystem::temp_directory_path() / "guff-l16-authority-gate");
+        std::filesystem::temp_directory_path() / "guff-l17-authority-gate");
     std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root, ec);
+
+    TestSigner signer;
+    std::uint64_t now = 2'000U;
+    guff::AuthorityLedger authority_ledger(
+        root / "authority.journal", signer, [&]() { return now; });
+    CHECK(authority_ledger.trust_key({
+        .signer_id = signer.signer_id(),
+        .key_id = "gate-key-v1",
+        .algorithm = signer.algorithm(),
+        .valid_from_unix_ms = 1'000U,
+    }).ok());
+    guff::AuthorityGate gate(authority_ledger);
 
     guff::ClubhouseRegistry clubhouse;
     CHECK(clubhouse.register_slot(destructive_slot()));
@@ -168,6 +183,7 @@ int main() {
     const auto scoped_out = guarded.run(request, hardware, wrong_scope, executor);
     CHECK(!scoped_out.executed());
     CHECK(scoped_out.authority.status == guff::AuthorityGateStatus::ScopeMismatch);
+    CHECK(authority_ledger.use_count(wrong_scope->receipt_id) == 0U);
     CHECK(executor_calls == 0U);
 
     auto destructive_receipt = receipt_for(
@@ -180,7 +196,14 @@ int main() {
     const auto allowed = guarded.run(request, hardware, destructive_receipt, executor);
     CHECK(allowed.executed());
     CHECK(allowed.authority.ok());
+    CHECK(allowed.authority.use_count == 1U);
     CHECK(allowed.session->succeeded());
+    CHECK(executor_calls == 1U);
+
+    const auto replayed = guarded.run(request, hardware, destructive_receipt, executor);
+    CHECK(!replayed.executed());
+    CHECK(replayed.authority.status == guff::AuthorityGateStatus::LedgerRejected);
+    CHECK(replayed.authority.ledger_status == guff::AuthorityLedgerStatus::UseLimitReached);
     CHECK(executor_calls == 1U);
 
     guff::SymbiosisLedger ledger(root / "symbiosis.journal");
@@ -202,7 +225,7 @@ int main() {
     CHECK(ledger.grant_count() == 1U);
 
     auto ephemeral = grant;
-    ephemeral.source.grant_id = "l16-ephemeral-grant";
+    ephemeral.source.grant_id = "l17-ephemeral-grant";
     ephemeral.retention.persist_grant = false;
     ephemeral.retention.persist_observation_stamps = false;
     ephemeral.retention.allow_memory_promotion = false;

@@ -31,10 +31,10 @@ namespace {
 
 class TestSigner final : public guff::AuthoritySigner, public guff::AuthorityVerifier {
 public:
-    std::string signer_id() const override { return "local:l16-recovery-signer"; }
+    std::string signer_id() const override { return "local:l17-recovery-signer"; }
     std::string algorithm() const override { return "TEST-SHA256"; }
     std::optional<std::string> sign(std::string_view canonical) const override {
-        return guff::sha256(std::string("l16-recovery-secret\n") + std::string(canonical));
+        return guff::sha256(std::string("l17-recovery-secret\n") + std::string(canonical));
     }
     bool knows(std::string_view signer, std::string_view algorithm_name) const override {
         return signer == signer_id() && algorithm_name == algorithm();
@@ -80,7 +80,7 @@ guff::ExecutionSessionRequest child_template(std::string payload) {
         .destructive = false,
     };
     request.route_request.task = guff::TaskClass::Coding;
-    request.route_request.profile_name = "recovery-protocol-v2";
+    request.route_request.profile_name = "recovery-protocol-v3";
     request.forge_request.invocation.invocation_id = "template-correlation:attempt:0";
     request.forge_request.invocation.slot_id = "forge.recovery.compiler";
     request.forge_request.invocation.capability = guff::SlotCapability::CodeBuild;
@@ -96,21 +96,27 @@ guff::ExecutionSessionRequest child_template(std::string payload) {
     request.session_budget.max_events = 32U;
     request.session_budget.max_event_detail_bytes = 256U;
     request.summary = "fresh recovery child";
-    request.recorded_at_utc = "2026-09-05T02:10:00Z";
-    request.dojo_tags = {"l16"};
+    request.recorded_at_utc = "2026-09-05T03:10:00Z";
+    request.dojo_tags = {"l17"};
     return request;
 }
 
 void sign_recovery(guff::RecoveryAuthorization& auth,
                    const TestSigner& signer,
                    std::string nonce,
-                   std::string issued_at = "2026-09-05T02:11:00Z") {
+                   std::uint64_t issued_at = 1'500U,
+                   std::uint64_t expires_at = 5'000U) {
     guff::AuthorityEnvelope envelope;
+    envelope.schema_version = 2U;
     envelope.purpose = guff::AuthorityPurpose::Recovery;
     envelope.subject_id = auth.parent_session_id;
-    envelope.actor_reference = "human:l16-recovery";
+    envelope.actor_reference = "human:l17-recovery";
     envelope.signer_id = signer.signer_id();
-    envelope.issued_at_utc = std::move(issued_at);
+    envelope.signer_key_id = "recovery-key-v1";
+    envelope.issued_at_utc = "2026-09-05T03:11:00Z";
+    envelope.issued_at_unix_ms = issued_at;
+    envelope.expires_at_unix_ms = expires_at;
+    envelope.max_uses = 1U;
     envelope.nonce = std::move(nonce);
     envelope.scope_sha256 = guff::recovery_authority_scope_sha256(auth);
     auth.authority_receipt = guff::issue_authority_receipt(envelope, signer);
@@ -126,16 +132,25 @@ int main() {
     std::filesystem::create_directories(root, ec);
 
     TestSigner signer;
-    guff::AuthorityGate authority_gate(signer);
+    std::uint64_t now = 2'000U;
+    guff::AuthorityLedger authority_ledger(
+        root / "authority.journal", signer, [&]() { return now; });
+    CHECK(authority_ledger.trust_key({
+        .signer_id = signer.signer_id(),
+        .key_id = "recovery-key-v1",
+        .algorithm = signer.algorithm(),
+        .valid_from_unix_ms = 1'000U,
+    }).ok());
+    guff::AuthorityGate authority_gate(authority_ledger);
     guff::SessionJournal journal(root / "session.journal");
     guff::RecoveryDecisionProtocol protocol(journal, authority_gate);
 
-    const auto parent = session_id("l16-parent-1");
+    const auto parent = session_id("l17-parent-1");
     const auto parent_begin = journal.begin({
         .session_id = parent,
         .correlation_id = "crashed-parent-001",
         .request_sha256 = guff::sha256("parent-request-1"),
-        .recorded_at_utc = "2026-09-05T02:00:00Z",
+        .recorded_at_utc = "2026-09-05T03:00:00Z",
     });
     CHECK(parent_begin.ok());
 
@@ -152,8 +167,11 @@ int main() {
 
     auth.child_correlation_id = "crashed-parent-001";
     sign_recovery(auth, signer, "identity-reuse");
+    CHECK(auth.authority_receipt.has_value());
+    const auto identity_receipt_id = auth.authority_receipt->receipt_id;
     const auto reused = protocol.decide(auth, child_template("fresh-build"));
     CHECK(reused.status == guff::RecoveryDecisionStatus::IdentityReuse);
+    CHECK(authority_ledger.use_count(identity_receipt_id) == 0U);
 
     auth.child_correlation_id = "recovery-child-001";
     sign_recovery(auth, signer, "fresh-child");
@@ -167,12 +185,13 @@ int main() {
     CHECK(prepared.child_request->parent_session_id == parent);
     CHECK(prepared.child_request->recovery_authorization_sha256 == prepared.authorization_sha256);
     CHECK(prepared.child_request->zenkai_policy.retry_authority == guff::RetryAuthority::None);
+    CHECK(authority_ledger.use_count(auth.authority_receipt->receipt_id) == 1U);
 
     const auto bypass = journal.begin({
         .session_id = session_id("bypass-child"),
         .correlation_id = "recovery-child-001",
         .request_sha256 = guff::sha256("bypass"),
-        .recorded_at_utc = "2026-09-05T02:12:00Z",
+        .recorded_at_utc = "2026-09-05T03:12:00Z",
     });
     CHECK(bypass.status == guff::JournalStatus::RecoveryNotAuthorized);
 
@@ -213,12 +232,12 @@ int main() {
     CHECK(replayed.status == guff::SessionStatus::JournalStoreFailed);
     CHECK(executor_calls == 1U);
 
-    const auto parent_two = session_id("l16-parent-2");
+    const auto parent_two = session_id("l17-parent-2");
     const auto begin_two = journal.begin({
         .session_id = parent_two,
         .correlation_id = "crashed-parent-002",
         .request_sha256 = guff::sha256("parent-request-2"),
-        .recorded_at_utc = "2026-09-05T02:20:00Z",
+        .recorded_at_utc = "2026-09-05T03:20:00Z",
     });
     CHECK(begin_two.ok());
     guff::RecoveryAuthorization dismiss;
@@ -226,22 +245,42 @@ int main() {
     dismiss.parent_session_id = parent_two;
     dismiss.parent_begin_record_sha256 = begin_two.record_sha256;
     dismiss.child_retry_authority = guff::RetryAuthority::None;
-    sign_recovery(dismiss, signer, "dismiss", "2026-09-05T02:21:00Z");
+    sign_recovery(dismiss, signer, "dismiss");
+    CHECK(dismiss.authority_receipt.has_value());
     const auto dismissed = protocol.decide(dismiss);
     CHECK(dismissed.status == guff::RecoveryDecisionStatus::Dismissed);
+    CHECK(authority_ledger.use_count(dismiss.authority_receipt->receipt_id) == 1U);
 
-    auto tampered = auth;
+    const auto parent_three = session_id("l17-parent-3");
+    const auto begin_three = journal.begin({
+        .session_id = parent_three,
+        .correlation_id = "crashed-parent-003",
+        .request_sha256 = guff::sha256("parent-request-3"),
+        .recorded_at_utc = "2026-09-05T03:30:00Z",
+    });
+    CHECK(begin_three.ok());
+    guff::RecoveryAuthorization expired_auth;
+    expired_auth.decision = guff::RecoveryDecision::Dismiss;
+    expired_auth.parent_session_id = parent_three;
+    expired_auth.parent_begin_record_sha256 = begin_three.record_sha256;
+    sign_recovery(expired_auth, signer, "expired-recovery", 1'500U, 2'500U);
+    now = 3'000U;
+    const auto expired_result = protocol.decide(expired_auth);
+    CHECK(expired_result.status == guff::RecoveryDecisionStatus::AuthorizationRequired);
+    CHECK(journal.inspect().interrupted.size() == 1U);
+
+    auto tampered = expired_auth;
     CHECK(tampered.authority_receipt.has_value());
     tampered.authority_receipt->envelope.scope_sha256 = guff::sha256("tampered-scope");
-    const auto rejected_tamper = protocol.decide(tampered, child_template("fresh-build"));
+    const auto rejected_tamper = protocol.decide(tampered);
     CHECK(rejected_tamper.status == guff::RecoveryDecisionStatus::AuthorizationRequired);
 
     const auto inspection = journal.inspect();
     CHECK(inspection.healthy);
-    const auto still_parent_two = std::find_if(
+    const auto still_parent_three = std::find_if(
         inspection.interrupted.begin(), inspection.interrupted.end(),
-        [&](const guff::InterruptedSession& item) { return item.session_id == parent_two; });
-    CHECK(still_parent_two == inspection.interrupted.end());
+        [&](const guff::InterruptedSession& item) { return item.session_id == parent_three; });
+    CHECK(still_parent_three != inspection.interrupted.end());
 
     std::filesystem::remove_all(root, ec);
     return 0;
