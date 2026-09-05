@@ -1,3 +1,4 @@
+#include "guff/authority_gate.hpp"
 #include "guff/caddy_router.hpp"
 #include "guff/clubhouse.hpp"
 #include "guff/data_leech.hpp"
@@ -6,7 +7,6 @@
 #include "guff/model_registry.hpp"
 #include "guff/native_process.hpp"
 #include "guff/reality.hpp"
-#include "guff/recovery_protocol.hpp"
 #include "guff/scorecard.hpp"
 #include "guff/scorecard_store.hpp"
 #include "guff/session_journal.hpp"
@@ -22,14 +22,13 @@ int main() {
     guff::RealityStack reality;
     reality.observe({guff::RealityLayer::Project, "spiraletech/GOLF-GUFF", "ring", 1.0});
     reality.observe({guff::RealityLayer::Runtime, "native-cpp20", "guff-core", 1.0});
-    reality.observe({guff::RealityLayer::Semantic, "recovery-decision-protocol", "L14", 1.0});
+    reality.observe({guff::RealityLayer::Semantic, "authority-gate", "L16", 1.0});
 
     const auto hardware = guff::detect_hardware_profile();
     guff::ModelRegistry registry;
     guff::Scorecard scorecard;
     guff::ScorecardStore store(std::filesystem::path("guff-scorecard.store"));
     guff::SessionJournal transaction_journal(std::filesystem::path("guff-transactions.journal"));
-    guff::RecoveryDecisionProtocol recovery_protocol(transaction_journal);
     const auto recovery = transaction_journal.inspect();
     guff::CaddyRouter router(registry, scorecard);
 
@@ -57,7 +56,7 @@ int main() {
     const auto delta = leech.observe_text(
         tool_grant,
         "tool://guff/bootstrap",
-        "L14 recovery decision protocol online");
+        "L16 authority gate online");
 
     if (delta.current) {
         static_cast<void>(symbiosis.stamp_observation(
@@ -68,7 +67,7 @@ int main() {
     if (auto slice = leech.slice_text(
             tool_grant,
             "tool://guff/bootstrap",
-            "L14 recovery decision protocol online",
+            "L16 authority gate online",
             0U,
             1024U)) {
         static_cast<void>(context.add(std::move(*slice)));
@@ -151,8 +150,7 @@ int main() {
             return guff::ForgeExecutorReport{true, 0, 5U};
         });
 
-    static_cast<void>(recovery_protocol);
-    std::cout << "GOLF GUFF / RING L14\n";
+    std::cout << "GOLF GUFF / RING L16\n";
     std::cout << "REALITY: " << reality.describe() << '\n';
     std::cout << "HARDWARE-ID: " << hardware.immutable_id() << '\n';
     std::cout << "SCORECARD-STORE: " << store.path().string() << " (lazy hydration)\n";
@@ -174,13 +172,12 @@ int main() {
               << " output_bytes=" << forge_result.observed_output_bytes << '\n';
     std::cout << "NATIVE-PROCESS: bindings=" << native_processes.size()
               << " shell=disabled argv=direct\n";
-    std::cout << "EXECUTION-SESSION: correlation=bounded dojo=terminal artifacts=metadata-only\n";
     std::cout << "TRANSACTION-JOURNAL: healthy=" << (recovery.healthy ? "yes" : "no")
               << " records=" << recovery.records
               << " interrupted=" << recovery.interrupted.size()
               << " lineage=" << recovery.recovery_lineage.size() << '\n';
-    std::cout << "RECOVERY-PROTOCOL: decisions=DISMISS|RETRY_AS_NEW_SESSION"
-              << " replay=disabled fresh-authority=required\n";
+    std::cout << "AUTHORITY-GATE: recovery=receipt destructive=receipt persistent-symbiosis=receipt"
+              << " barcode=transport-only\n";
     std::cout << "CADDY-ROUTER: " << guff::to_string(decision.status)
               << " depth=" << decision.recursion_depth
               << " verify=" << (decision.require_verification ? "yes" : "no") << '\n';
