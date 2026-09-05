@@ -18,6 +18,7 @@ enum class AuthorityGateStatus : std::uint8_t {
     ReceiptMissing,
     ReceiptRejected,
     ScopeMismatch,
+    CapabilityMismatch,
     LedgerRejected
 };
 
@@ -39,7 +40,8 @@ public:
         const std::optional<AuthorityReceipt>& receipt,
         AuthorityPurpose purpose,
         std::string_view subject_id,
-        std::string_view scope_sha256) const;
+        std::string_view scope_sha256,
+        std::string_view required_capability = {}) const;
 
 private:
     AuthorityLedger& ledger_;

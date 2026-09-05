@@ -3,6 +3,7 @@
 #include "guff/hardware_profile.hpp"
 #include "guff/sha256.hpp"
 
+#include <algorithm>
 #include <sstream>
 #include <utility>
 
@@ -19,7 +20,8 @@ AuthorityGateResult AuthorityGate::authorize(
     const std::optional<AuthorityReceipt>& receipt,
     AuthorityPurpose purpose,
     std::string_view subject_id,
-    std::string_view scope_sha256) const {
+    std::string_view scope_sha256,
+    std::string_view required_capability) const {
     AuthorityGateResult result;
     if (!receipt) {
         result.status = AuthorityGateStatus::ReceiptMissing;
@@ -31,6 +33,22 @@ AuthorityGateResult AuthorityGate::authorize(
         result.status = AuthorityGateStatus::ScopeMismatch;
         result.errors.emplace_back("authority receipt scope does not match privileged operation");
         return result;
+    }
+    if (receipt->envelope.schema_version == 3U) {
+        if (required_capability.empty()) {
+            result.status = AuthorityGateStatus::CapabilityMismatch;
+            result.errors.emplace_back("schema v3 authority requires an explicit capability label at the gate");
+            return result;
+        }
+        const auto capability = std::find(
+            receipt->envelope.capabilities.begin(),
+            receipt->envelope.capabilities.end(),
+            required_capability);
+        if (capability == receipt->envelope.capabilities.end()) {
+            result.status = AuthorityGateStatus::CapabilityMismatch;
+            result.errors.emplace_back("required capability is absent from the signed authority set");
+            return result;
+        }
     }
 
     const auto ledger_result = ledger_.authorize_and_consume(
@@ -150,6 +168,7 @@ std::string_view to_string(AuthorityGateStatus status) noexcept {
     case AuthorityGateStatus::ReceiptMissing: return "RECEIPT_MISSING";
     case AuthorityGateStatus::ReceiptRejected: return "RECEIPT_REJECTED";
     case AuthorityGateStatus::ScopeMismatch: return "SCOPE_MISMATCH";
+    case AuthorityGateStatus::CapabilityMismatch: return "CAPABILITY_MISMATCH";
     case AuthorityGateStatus::LedgerRejected: return "LEDGER_REJECTED";
     }
     return "RECEIPT_REJECTED";
