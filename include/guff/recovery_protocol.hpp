@@ -1,5 +1,6 @@
 #pragma once
 
+#include "guff/authority_gate.hpp"
 #include "guff/execution_session.hpp"
 #include "guff/session_journal.hpp"
 
@@ -27,14 +28,12 @@ enum class RecoveryDecisionStatus : std::uint8_t {
 };
 
 struct RecoveryAuthorization {
-    bool approved{false};
     RecoveryDecision decision{RecoveryDecision::Dismiss};
     std::string parent_session_id;
     std::string parent_begin_record_sha256;
-    std::string actor_reference;
-    std::string issued_at_utc;
     std::string child_correlation_id;
     RetryAuthority child_retry_authority{RetryAuthority::None};
+    std::optional<AuthorityReceipt> authority_receipt;
 };
 
 struct RecoveryDecisionResult {
@@ -49,7 +48,8 @@ struct RecoveryDecisionResult {
 
 class RecoveryDecisionProtocol {
 public:
-    explicit RecoveryDecisionProtocol(SessionJournal& journal) noexcept;
+    RecoveryDecisionProtocol(SessionJournal& journal,
+                             const AuthorityGate& authority_gate) noexcept;
 
     [[nodiscard]] RecoveryDecisionResult decide(
         const RecoveryAuthorization& authorization,
@@ -57,8 +57,11 @@ public:
 
 private:
     SessionJournal& journal_;
+    const AuthorityGate& authority_gate_;
 };
 
+[[nodiscard]] std::string recovery_authority_scope_sha256(
+    const RecoveryAuthorization& authorization);
 [[nodiscard]] std::string recovery_authorization_sha256(
     const RecoveryAuthorization& authorization);
 [[nodiscard]] std::string recovery_authorization_id(
