@@ -44,9 +44,8 @@ std::vector<std::string> validate_authorization(
             errors.emplace_back("DISMISS cannot contain a child correlation id");
         if (authorization.child_retry_authority != RetryAuthority::None)
             errors.emplace_back("DISMISS cannot grant child retry authority");
-    } else {
-        if (!valid_token(authorization.child_correlation_id))
-            errors.emplace_back("RETRY_AS_NEW_SESSION requires a fresh child correlation id");
+    } else if (!valid_token(authorization.child_correlation_id)) {
+        errors.emplace_back("RETRY_AS_NEW_SESSION requires a fresh child correlation id");
     }
     return errors;
 }
@@ -161,8 +160,6 @@ RecoveryDecisionResult RecoveryDecisionProtocol::decide(
     child.parent_session_id = authorization.parent_session_id;
     child.recovery_authorization_sha256 = result.authorization_sha256;
     child.dojo_tags.push_back("recovery-decision:retry-as-new-session");
-    child.dojo_tags.push_back("recovery-parent:" + authorization.parent_session_id);
-    child.dojo_tags.push_back("recovery-authorization:" + result.authorization_sha256);
     result.child_request = std::move(child);
     result.status = RecoveryDecisionStatus::RetryPrepared;
     return result;
