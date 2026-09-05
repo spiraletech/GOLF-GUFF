@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.18.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.19.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,6 +26,7 @@ add_library(guff_core STATIC
     src/authority_receipt.cpp
     src/authority_ledger.cpp
     src/authority_delegation.cpp
+    src/session_key.cpp
     src/authority_gate.cpp
     src/sha256.cpp
     src/model_manifest.cpp
@@ -129,4 +130,8 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_authority_delegation tests/authority_delegation.cpp)
     target_link_libraries(guff_authority_delegation PRIVATE guff_core)
     add_test(NAME guff.authority_delegation COMMAND guff_authority_delegation)
+
+    add_executable(guff_session_key tests/session_key.cpp)
+    target_link_libraries(guff_session_key PRIVATE guff_core)
+    add_test(NAME guff.session_key COMMAND guff_session_key)
 endif()
