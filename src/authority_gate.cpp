@@ -1,11 +1,8 @@
 #include "guff/authority_gate.hpp"
 
-#include "guff/execution_session.hpp"
 #include "guff/hardware_profile.hpp"
 #include "guff/sha256.hpp"
-#include "guff/symbiosis_ledger.hpp"
 
-#include <algorithm>
 #include <sstream>
 #include <utility>
 
@@ -94,10 +91,7 @@ GatedExecutionResult AuthorityGatedExecutionSession::run(
     const ExecutionSessionRequest& request,
     const HardwareProfile& hardware,
     const std::optional<AuthorityReceipt>& receipt,
-    const std::function<ForgeExecutorReport(
-        const SlotManifest&,
-        const ForgeExecutionRequest&,
-        ForgeOutputSink&)>& executor) const {
+    const ForgeAdapter::ExecutorFunction& executor) const {
     GatedExecutionResult result;
     if (request.route_request.signal.destructive) {
         result.authority = gate_.authorize(
