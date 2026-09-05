@@ -24,6 +24,7 @@ add_library(guff_core STATIC
     src/session_journal.cpp
     src/recovery_protocol.cpp
     src/authority_receipt.cpp
+    src/authority_gate.cpp
     src/sha256.cpp
     src/model_manifest.cpp
     src/model_registry.cpp
@@ -114,4 +115,8 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_authority_receipt tests/authority_receipt.cpp)
     target_link_libraries(guff_authority_receipt PRIVATE guff_core)
     add_test(NAME guff.authority_receipt COMMAND guff_authority_receipt)
+
+    add_executable(guff_authority_gate tests/authority_gate.cpp)
+    target_link_libraries(guff_authority_gate PRIVATE guff_core)
+    add_test(NAME guff.authority_gate COMMAND guff_authority_gate)
 endif()

@@ -28,16 +28,10 @@ bool valid_token(std::string_view value) noexcept {
 std::vector<std::string> validate_authorization(
     const RecoveryAuthorization& authorization) {
     std::vector<std::string> errors;
-    if (!authorization.approved)
-        errors.emplace_back("explicit human recovery approval is required");
     if (!canonical_session_id(authorization.parent_session_id))
         errors.emplace_back("parent_session_id must be canonical");
     if (!is_sha256(authorization.parent_begin_record_sha256))
         errors.emplace_back("parent_begin_record_sha256 must be SHA-256");
-    if (authorization.actor_reference.empty() || authorization.actor_reference.size() > 128U)
-        errors.emplace_back("actor_reference must be 1-128 bytes");
-    if (authorization.issued_at_utc.empty() || authorization.issued_at_utc.size() > 128U)
-        errors.emplace_back("issued_at_utc must be 1-128 bytes");
 
     if (authorization.decision == RecoveryDecision::Dismiss) {
         if (!authorization.child_correlation_id.empty())
@@ -57,20 +51,29 @@ bool RecoveryDecisionResult::ok() const noexcept {
            status == RecoveryDecisionStatus::RetryPrepared;
 }
 
-RecoveryDecisionProtocol::RecoveryDecisionProtocol(SessionJournal& journal) noexcept
-    : journal_(journal) {}
+RecoveryDecisionProtocol::RecoveryDecisionProtocol(
+    SessionJournal& journal,
+    const AuthorityGate& authority_gate) noexcept
+    : journal_(journal), authority_gate_(authority_gate) {}
 
-std::string recovery_authorization_sha256(
+std::string recovery_authority_scope_sha256(
     const RecoveryAuthorization& authorization) {
     std::ostringstream canonical;
     canonical << static_cast<unsigned>(authorization.decision) << '\n'
               << authorization.parent_session_id << '\n'
               << authorization.parent_begin_record_sha256 << '\n'
-              << authorization.actor_reference << '\n'
-              << authorization.issued_at_utc << '\n'
               << authorization.child_correlation_id << '\n'
-              << static_cast<unsigned>(authorization.child_retry_authority) << '\n'
-              << (authorization.approved ? 1 : 0);
+              << static_cast<unsigned>(authorization.child_retry_authority);
+    return sha256(canonical.str());
+}
+
+std::string recovery_authorization_sha256(
+    const RecoveryAuthorization& authorization) {
+    std::ostringstream canonical;
+    canonical << recovery_authority_scope_sha256(authorization) << '\n';
+    if (authorization.authority_receipt) {
+        canonical << authorization.authority_receipt->receipt_id;
+    }
     return sha256(canonical.str());
 }
 
@@ -84,12 +87,19 @@ RecoveryDecisionResult RecoveryDecisionProtocol::decide(
     const std::optional<ExecutionSessionRequest>& child_template) const {
     RecoveryDecisionResult result;
     result.errors = validate_authorization(authorization);
-    if (!authorization.approved) {
-        result.status = RecoveryDecisionStatus::AuthorizationRequired;
-        return result;
-    }
     if (!result.errors.empty()) {
         result.status = RecoveryDecisionStatus::Invalid;
+        return result;
+    }
+
+    const auto gate = authority_gate_.authorize(
+        authorization.authority_receipt,
+        AuthorityPurpose::Recovery,
+        authorization.parent_session_id,
+        recovery_authority_scope_sha256(authorization));
+    if (!gate.ok()) {
+        result.status = RecoveryDecisionStatus::AuthorizationRequired;
+        result.errors = gate.errors;
         return result;
     }
 
@@ -126,6 +136,7 @@ RecoveryDecisionResult RecoveryDecisionProtocol::decide(
 
     result.authorization_sha256 = recovery_authorization_sha256(authorization);
     result.authorization_id = recovery_authorization_id(authorization);
+    const auto recorded_at = authorization.authority_receipt->envelope.issued_at_utc;
 
     const auto journal_result = journal_.recover({
         .kind = authorization.decision == RecoveryDecision::Dismiss
@@ -137,7 +148,7 @@ RecoveryDecisionResult RecoveryDecisionProtocol::decide(
         .begin_record_sha256 = interrupted->begin_record_sha256,
         .authorization_sha256 = result.authorization_sha256,
         .child_correlation_id = authorization.child_correlation_id,
-        .recorded_at_utc = authorization.issued_at_utc,
+        .recorded_at_utc = recorded_at,
     });
     if (!journal_result.ok()) {
         result.status = journal_result.status == JournalStatus::RecoveryNotAuthorized
@@ -160,6 +171,7 @@ RecoveryDecisionResult RecoveryDecisionProtocol::decide(
     child.parent_session_id = authorization.parent_session_id;
     child.recovery_authorization_sha256 = result.authorization_sha256;
     child.dojo_tags.push_back("recovery-decision:retry-as-new-session");
+    child.dojo_tags.push_back("authority-receipt:" + gate.receipt_id);
     result.child_request = std::move(child);
     result.status = RecoveryDecisionStatus::RetryPrepared;
     return result;
