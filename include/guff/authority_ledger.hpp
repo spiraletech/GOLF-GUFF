@@ -25,6 +25,7 @@ enum class AuthorityLedgerStatus : std::uint8_t {
     ReceiptRevoked,
     NonceReplay,
     UseLimitReached,
+    DelegationRejected,
     StorageError,
     Corrupt
 };
@@ -53,6 +54,7 @@ struct AuthorityLedgerInspection {
     std::size_t trusted_keys{0U};
     std::size_t consumed_receipts{0U};
     std::size_t revoked_receipts{0U};
+    std::size_t delegated_receipts{0U};
     std::vector<std::string> errors;
 };
 
@@ -74,6 +76,10 @@ public:
     [[nodiscard]] AuthorityLedgerResult revoke_receipt(std::string_view receipt_id,
                                                        std::uint64_t revoked_at_unix_ms);
 
+    [[nodiscard]] AuthorityLedgerResult register_delegation(
+        const AuthorityReceipt& parent,
+        const AuthorityReceipt& child);
+
     [[nodiscard]] AuthorityLedgerResult authorize_and_consume(
         const AuthorityReceipt& receipt,
         AuthorityPurpose expected_purpose,
@@ -83,7 +89,11 @@ public:
     [[nodiscard]] bool replay(std::vector<std::string>* errors = nullptr);
     [[nodiscard]] AuthorityLedgerInspection inspect() const;
     [[nodiscard]] std::size_t use_count(std::string_view receipt_id) const noexcept;
+    [[nodiscard]] std::size_t delegated_uses(std::string_view receipt_id) const noexcept;
     [[nodiscard]] bool receipt_revoked(std::string_view receipt_id) const noexcept;
+    [[nodiscard]] bool delegation_registered(std::string_view child_receipt_id) const noexcept;
+    [[nodiscard]] std::optional<std::string> delegation_parent(
+        std::string_view child_receipt_id) const;
     [[nodiscard]] const std::filesystem::path& journal_path() const noexcept;
 
 private:
@@ -98,14 +108,19 @@ private:
         std::string_view signer_id,
         std::string_view key_id) const;
     [[nodiscard]] std::uint64_t now_ms() const;
+    [[nodiscard]] bool ancestor_revoked(std::string_view receipt_id,
+                                        std::uint64_t now,
+                                        std::string* revoked_ancestor = nullptr) const;
 
     std::filesystem::path journal_path_;
     const AuthorityVerifier& verifier_;
     Clock clock_;
     std::unordered_map<std::string, KeyState> keys_;
     std::unordered_map<std::string, std::size_t> receipt_uses_;
+    std::unordered_map<std::string, std::size_t> delegated_uses_;
     std::unordered_map<std::string, std::uint64_t> revoked_receipts_;
     std::unordered_map<std::string, std::string> nonce_receipts_;
+    std::unordered_map<std::string, std::string> delegation_parent_;
     std::size_t sequence_{0U};
     std::string last_record_sha256_;
     bool healthy_{true};
