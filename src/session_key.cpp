@@ -6,7 +6,6 @@
 #include <charconv>
 #include <chrono>
 #include <fstream>
-#include <limits>
 #include <sstream>
 #include <system_error>
 #include <utility>
@@ -104,7 +103,7 @@ bool valid_authority_receipt_id(std::string_view value) {
            is_sha256(value.substr(kAuthorityReceiptPrefix.size()));
 }
 
-std::uint64_t now_ms() {
+std::uint64_t system_now_ms() {
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
@@ -140,7 +139,7 @@ std::string capabilities_digest(const std::vector<std::string>& capabilities) {
     return sha256(out.str());
 }
 
-SessionKeyResult invalid_result(SessionKeyStatus status, std::string message) {
+SessionKeyResult fail(SessionKeyStatus status, std::string message) {
     SessionKeyResult result;
     result.status = status;
     result.errors.push_back(std::move(message));
@@ -410,18 +409,19 @@ SessionKeyResult SessionKeyLedger::register_bundle(const SessionKeyBundle& bundl
         receipt.key_fingerprint_sha256 != certificate.child_key_fingerprint_sha256 ||
         receipt.max_uses != certificate.max_uses ||
         receipt.expires_at_unix_ms != certificate.expires_at_unix_ms) {
-        return invalid_result(SessionKeyStatus::Invalid,
-                              "session-key bundle registration fields disagree");
+        return fail(SessionKeyStatus::Invalid,
+                    "session-key bundle registration fields disagree");
     }
     if (registrations_.contains(receipt.receipt_id)) {
-        return invalid_result(SessionKeyStatus::Invalid,
-                              "session-key receipt is already registered");
+        return fail(SessionKeyStatus::Invalid,
+                    "session-key receipt is already registered");
     }
-    for (const auto& [_, registration] : registrations_) {
+    for (const auto& entry : registrations_) {
+        const auto& registration = entry.second;
         if (registration.signer_id == receipt.signer_id &&
             registration.key_id == receipt.key_id) {
-            return invalid_result(SessionKeyStatus::Invalid,
-                                  "an ephemeral delegated key may back only one registered branch");
+            return fail(SessionKeyStatus::Invalid,
+                        "an ephemeral delegated key may back only one registered branch");
         }
     }
     std::ostringstream body;
@@ -436,7 +436,7 @@ SessionKeyResult SessionKeyLedger::register_bundle(const SessionKeyBundle& bundl
          << '\t' << receipt.max_uses;
     std::string error;
     if (!append_event(body.str(), &error)) {
-        return invalid_result(SessionKeyStatus::StorageError, std::move(error));
+        return fail(SessionKeyStatus::StorageError, std::move(error));
     }
     registrations_[receipt.receipt_id] = Registration{
         voucher.receipt_id,
@@ -470,8 +470,9 @@ SessionKeyResult SessionKeyLedger::preflight(
     }
     const auto registration = registrations_.find(bundle.receipt.receipt_id);
     if (registration == registrations_.end()) {
-        return invalid_result(SessionKeyStatus::NotRegistered,
-                              "session-key receipt is not registered in handoff ledger");
+        result.status = SessionKeyStatus::NotRegistered;
+        result.errors.emplace_back("session-key receipt is not registered in handoff ledger");
+        return result;
     }
     const auto& registered = registration->second;
     if (registered.voucher_receipt_id != bundle.voucher.receipt_id ||
@@ -481,8 +482,9 @@ SessionKeyResult SessionKeyLedger::preflight(
         registered.algorithm != bundle.receipt.algorithm ||
         registered.key_fingerprint_sha256 != bundle.receipt.key_fingerprint_sha256 ||
         registered.max_uses != bundle.receipt.max_uses) {
-        return invalid_result(SessionKeyStatus::NotRegistered,
-                              "session-key bundle does not match durable handoff registration");
+        result.status = SessionKeyStatus::NotRegistered;
+        result.errors.emplace_back("session-key bundle does not match durable handoff registration");
+        return result;
     }
     const auto voucher_verified = verify_authority_receipt(
         bundle.voucher,
@@ -514,34 +516,40 @@ SessionKeyResult SessionKeyLedger::preflight(
     if (!is_sha256(expected_scope_sha256) ||
         bundle.receipt.scope_sha256 != expected_scope_sha256 ||
         bundle.voucher.envelope.scope_sha256 != expected_scope_sha256) {
-        return invalid_result(SessionKeyStatus::ScopeMismatch,
-                              "session key scope does not match requested operation");
+        result.status = SessionKeyStatus::ScopeMismatch;
+        result.errors.emplace_back("session key scope does not match requested operation");
+        return result;
     }
     if (bundle.receipt.purpose != expected_purpose ||
         bundle.receipt.subject_id != expected_subject_id) {
-        return invalid_result(SessionKeyStatus::ReceiptRejected,
-                              "session key purpose or subject does not match requested operation");
+        result.status = SessionKeyStatus::ReceiptRejected;
+        result.errors.emplace_back("session key purpose or subject does not match requested operation");
+        return result;
     }
     if (!valid_capability(expected_capability) ||
         !contains_capability(bundle.receipt.capabilities, expected_capability)) {
-        return invalid_result(SessionKeyStatus::CapabilityMismatch,
-                              "session key does not contain requested capability");
+        result.status = SessionKeyStatus::CapabilityMismatch;
+        result.errors.emplace_back("session key does not contain requested capability");
+        return result;
     }
-    const auto now = now_ms();
+    const auto now = system_now_ms();
     if (now >= bundle.receipt.expires_at_unix_ms) {
-        return invalid_result(SessionKeyStatus::ReceiptExpired,
-                              "session-key receipt has expired");
+        result.status = SessionKeyStatus::ReceiptExpired;
+        result.errors.emplace_back("session-key receipt has expired");
+        return result;
     }
     const auto revoked_receipt = revoked_receipts_.find(bundle.receipt.receipt_id);
     if (revoked_receipt != revoked_receipts_.end() && now >= revoked_receipt->second) {
-        return invalid_result(SessionKeyStatus::ReceiptRevoked,
-                              "session-key receipt has been revoked");
+        result.status = SessionKeyStatus::ReceiptRevoked;
+        result.errors.emplace_back("session-key receipt has been revoked");
+        return result;
     }
     const auto key = revoked_keys_.find(key_map_id(bundle.receipt.signer_id,
                                                    bundle.receipt.key_id));
     if (key != revoked_keys_.end() && now >= key->second) {
-        return invalid_result(SessionKeyStatus::KeyRevoked,
-                              "delegated session key has been revoked");
+        result.status = SessionKeyStatus::KeyRevoked;
+        result.errors.emplace_back("delegated session key has been revoked");
+        return result;
     }
     result.use_count = use_count(bundle.receipt.receipt_id);
     if (result.use_count >= bundle.receipt.max_uses) {
@@ -563,8 +571,9 @@ SessionKeyResult SessionKeyLedger::consume(const SessionKeyReceipt& receipt) {
     }
     const auto registration = registrations_.find(receipt.receipt_id);
     if (registration == registrations_.end()) {
-        return invalid_result(SessionKeyStatus::NotRegistered,
-                              "session-key receipt is not registered");
+        result.status = SessionKeyStatus::NotRegistered;
+        result.errors.emplace_back("session-key receipt is not registered");
+        return result;
     }
     const auto current = use_count(receipt.receipt_id);
     if (current >= registration->second.max_uses) {
@@ -577,10 +586,10 @@ SessionKeyResult SessionKeyLedger::consume(const SessionKeyReceipt& receipt) {
     std::ostringstream body;
     body << "U\t" << hex_encode(receipt.receipt_id)
          << '\t' << next
-         << '\t' << now_ms();
+         << '\t' << system_now_ms();
     std::string error;
     if (!append_event(body.str(), &error)) {
-        return invalid_result(SessionKeyStatus::StorageError, std::move(error));
+        return fail(SessionKeyStatus::StorageError, std::move(error));
     }
     receipt_uses_[receipt.receipt_id] = next;
     result.status = SessionKeyStatus::Allowed;
@@ -593,24 +602,25 @@ SessionKeyResult SessionKeyLedger::revoke_key(
     std::string_view key_id,
     std::uint64_t revoked_at_unix_ms) {
     if (!valid_token(signer_id) || !valid_token(key_id) || revoked_at_unix_ms == 0U) {
-        return invalid_result(SessionKeyStatus::Invalid,
-                              "session-key revocation metadata is invalid");
+        return fail(SessionKeyStatus::Invalid,
+                    "session-key revocation metadata is invalid");
     }
     const auto map_id = key_map_id(signer_id, key_id);
     if (revoked_keys_.contains(map_id)) {
-        return invalid_result(SessionKeyStatus::Invalid,
-                              "delegated session key is already revoked");
+        return fail(SessionKeyStatus::Invalid,
+                    "delegated session key is already revoked");
     }
     bool registered = false;
-    for (const auto& [_, item] : registrations_) {
+    for (const auto& entry : registrations_) {
+        const auto& item = entry.second;
         if (item.signer_id == signer_id && item.key_id == key_id) {
             registered = true;
             break;
         }
     }
     if (!registered) {
-        return invalid_result(SessionKeyStatus::NotRegistered,
-                              "delegated session key is not registered");
+        return fail(SessionKeyStatus::NotRegistered,
+                    "delegated session key is not registered");
     }
     std::ostringstream body;
     body << "R\t" << hex_encode(signer_id)
@@ -618,7 +628,7 @@ SessionKeyResult SessionKeyLedger::revoke_key(
          << '\t' << revoked_at_unix_ms;
     std::string error;
     if (!append_event(body.str(), &error)) {
-        return invalid_result(SessionKeyStatus::StorageError, std::move(error));
+        return fail(SessionKeyStatus::StorageError, std::move(error));
     }
     revoked_keys_[map_id] = revoked_at_unix_ms;
     SessionKeyResult result;
@@ -630,23 +640,23 @@ SessionKeyResult SessionKeyLedger::revoke_receipt(
     std::string_view receipt_id,
     std::uint64_t revoked_at_unix_ms) {
     if (!valid_session_receipt_id(receipt_id) || revoked_at_unix_ms == 0U) {
-        return invalid_result(SessionKeyStatus::Invalid,
-                              "session-key receipt revocation metadata is invalid");
+        return fail(SessionKeyStatus::Invalid,
+                    "session-key receipt revocation metadata is invalid");
     }
     if (!registrations_.contains(std::string(receipt_id))) {
-        return invalid_result(SessionKeyStatus::NotRegistered,
-                              "session-key receipt is not registered");
+        return fail(SessionKeyStatus::NotRegistered,
+                    "session-key receipt is not registered");
     }
     if (revoked_receipts_.contains(std::string(receipt_id))) {
-        return invalid_result(SessionKeyStatus::Invalid,
-                              "session-key receipt is already revoked");
+        return fail(SessionKeyStatus::Invalid,
+                    "session-key receipt is already revoked");
     }
     std::ostringstream body;
     body << "X\t" << hex_encode(receipt_id)
          << '\t' << revoked_at_unix_ms;
     std::string error;
     if (!append_event(body.str(), &error)) {
-        return invalid_result(SessionKeyStatus::StorageError, std::move(error));
+        return fail(SessionKeyStatus::StorageError, std::move(error));
     }
     revoked_receipts_[std::string(receipt_id)] = revoked_at_unix_ms;
     SessionKeyResult result;
@@ -706,6 +716,7 @@ bool SessionKeyLedger::replay(std::vector<std::string>* errors) {
             errors_.push_back("session-key ledger record hash mismatch at line " + std::to_string(line_number));
             break;
         }
+
         const auto type = fields[2];
         bool event_ok = true;
         if (type == "H" && fields.size() == 13U) {
@@ -726,7 +737,8 @@ bool SessionKeyLedger::replay(std::vector<std::string>* errors) {
                        parse_unsigned(fields[11], &max_uses) && max_uses != 0U &&
                        !registrations_.contains(*receipt);
             if (event_ok) {
-                for (const auto& [_, existing] : registrations_) {
+                for (const auto& entry : registrations_) {
+                    const auto& existing = entry.second;
                     if (existing.signer_id == *signer && existing.key_id == *key) {
                         event_ok = false;
                         break;
@@ -735,17 +747,25 @@ bool SessionKeyLedger::replay(std::vector<std::string>* errors) {
             }
             if (event_ok) {
                 registrations_[*receipt] = Registration{
-                    *voucher, *certificate, *receipt, *signer, *key, *algorithm,
-                    std::string(fields[9]), expires, max_uses};
+                    *voucher,
+                    *certificate,
+                    *receipt,
+                    *signer,
+                    *key,
+                    *algorithm,
+                    std::string(fields[9]),
+                    expires,
+                    max_uses,
+                };
             }
-        } else if (type == "U" && fields.size() == 6U) {
+        } else if (type == "U" && fields.size() == 7U) {
             auto receipt = hex_decode(fields[3]);
             std::size_t use_index = 0U;
             std::uint64_t at = 0U;
             event_ok = receipt && valid_session_receipt_id(*receipt) &&
                        registrations_.contains(*receipt) &&
                        parse_unsigned(fields[4], &use_index) && use_index != 0U &&
-                       parse_unsigned(fields[5 - 1U], &at);
+                       parse_unsigned(fields[5], &at) && at != 0U;
             if (event_ok) {
                 const auto expected = use_count(*receipt) + 1U;
                 event_ok = use_index == expected &&
