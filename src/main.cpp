@@ -22,7 +22,7 @@ int main() {
     guff::RealityStack reality;
     reality.observe({guff::RealityLayer::Project, "spiraletech/GOLF-GUFF", "ring", 1.0});
     reality.observe({guff::RealityLayer::Runtime, "native-cpp20", "guff-core", 1.0});
-    reality.observe({guff::RealityLayer::Semantic, "authority-gate", "L16", 1.0});
+    reality.observe({guff::RealityLayer::Semantic, "authority-ledger", "L17", 1.0});
 
     const auto hardware = guff::detect_hardware_profile();
     guff::ModelRegistry registry;
@@ -56,7 +56,7 @@ int main() {
     const auto delta = leech.observe_text(
         tool_grant,
         "tool://guff/bootstrap",
-        "L16 authority gate online");
+        "L17 authority ledger online");
 
     if (delta.current) {
         static_cast<void>(symbiosis.stamp_observation(
@@ -67,7 +67,7 @@ int main() {
     if (auto slice = leech.slice_text(
             tool_grant,
             "tool://guff/bootstrap",
-            "L16 authority gate online",
+            "L17 authority ledger online",
             0U,
             1024U)) {
         static_cast<void>(context.add(std::move(*slice)));
@@ -150,7 +150,7 @@ int main() {
             return guff::ForgeExecutorReport{true, 0, 5U};
         });
 
-    std::cout << "GOLF GUFF / RING L16\n";
+    std::cout << "GOLF GUFF / RING L17\n";
     std::cout << "REALITY: " << reality.describe() << '\n';
     std::cout << "HARDWARE-ID: " << hardware.immutable_id() << '\n';
     std::cout << "SCORECARD-STORE: " << store.path().string() << " (lazy hydration)\n";
@@ -178,6 +178,8 @@ int main() {
               << " lineage=" << recovery.recovery_lineage.size() << '\n';
     std::cout << "AUTHORITY-GATE: recovery=receipt destructive=receipt persistent-symbiosis=receipt"
               << " barcode=transport-only\n";
+    std::cout << "AUTHORITY-LEDGER: schema=v2 expiry=on replay-defense=on revocation=on"
+              << " use-budget=signed key-rotation=on\n";
     std::cout << "CADDY-ROUTER: " << guff::to_string(decision.status)
               << " depth=" << decision.recursion_depth
               << " verify=" << (decision.require_verification ? "yes" : "no") << '\n';
