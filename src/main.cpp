@@ -7,6 +7,7 @@
 #include "guff/model_registry.hpp"
 #include "guff/native_process.hpp"
 #include "guff/reality.hpp"
+#include "guff/runtime_lease.hpp"
 #include "guff/scorecard.hpp"
 #include "guff/scorecard_store.hpp"
 #include "guff/session_journal.hpp"
@@ -22,7 +23,7 @@ int main() {
     guff::RealityStack reality;
     reality.observe({guff::RealityLayer::Project, "spiraletech/GOLF-GUFF", "ring", 1.0});
     reality.observe({guff::RealityLayer::Runtime, "native-cpp20", "guff-core", 1.0});
-    reality.observe({guff::RealityLayer::Semantic, "delegation-key-handoff", "L19", 1.0});
+    reality.observe({guff::RealityLayer::Semantic, "runtime-capability-leases", "L20", 1.0});
 
     const auto hardware = guff::detect_hardware_profile();
     guff::ModelRegistry registry;
@@ -56,7 +57,7 @@ int main() {
     const auto delta = leech.observe_text(
         tool_grant,
         "tool://guff/bootstrap",
-        "L19 delegation key handoff online");
+        "L20 runtime capability leases online");
 
     if (delta.current) {
         static_cast<void>(symbiosis.stamp_observation(
@@ -67,7 +68,7 @@ int main() {
     if (auto slice = leech.slice_text(
             tool_grant,
             "tool://guff/bootstrap",
-            "L19 delegation key handoff online",
+            "L20 runtime capability leases online",
             0U,
             1024U)) {
         static_cast<void>(context.add(std::move(*slice)));
@@ -150,7 +151,7 @@ int main() {
             return guff::ForgeExecutorReport{true, 0, 5U};
         });
 
-    std::cout << "GOLF GUFF / RING L19\n";
+    std::cout << "GOLF GUFF / RING L20\n";
     std::cout << "REALITY: " << reality.describe() << '\n';
     std::cout << "HARDWARE-ID: " << hardware.immutable_id() << '\n';
     std::cout << "SCORECARD-STORE: " << store.path().string() << " (lazy hydration)\n";
@@ -184,6 +185,8 @@ int main() {
               << " uses=reserved ancestry=revocable depth=bounded\n";
     std::cout << "SESSION-KEYS: voucher-backed=yes ephemeral-keys=branch-bound"
               << " root-key=never-shared replay=durable revocation=two-plane\n";
+    std::cout << "RUNTIME-LEASES: device=bound executable=sha256 process=instance"
+              << " slot=bound session=bound strata=bound replay=durable\n";
     std::cout << "CADDY-ROUTER: " << guff::to_string(decision.status)
               << " depth=" << decision.recursion_depth
               << " verify=" << (decision.require_verification ? "yes" : "no") << '\n';
