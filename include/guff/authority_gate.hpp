@@ -1,6 +1,6 @@
 #pragma once
 
-#include "guff/authority_receipt.hpp"
+#include "guff/authority_ledger.hpp"
 #include "guff/execution_session.hpp"
 #include "guff/symbiosis_ledger.hpp"
 
@@ -16,12 +16,15 @@ enum class AuthorityGateStatus : std::uint8_t {
     Allowed,
     ReceiptMissing,
     ReceiptRejected,
-    ScopeMismatch
+    ScopeMismatch,
+    LedgerRejected
 };
 
 struct AuthorityGateResult {
     AuthorityGateStatus status{AuthorityGateStatus::ReceiptMissing};
+    AuthorityLedgerStatus ledger_status{AuthorityLedgerStatus::Invalid};
     std::string receipt_id;
+    std::size_t use_count{0U};
     std::vector<std::string> errors;
 
     [[nodiscard]] bool ok() const noexcept;
@@ -29,7 +32,7 @@ struct AuthorityGateResult {
 
 class AuthorityGate {
 public:
-    explicit AuthorityGate(const AuthorityVerifier& verifier) noexcept;
+    explicit AuthorityGate(AuthorityLedger& ledger) noexcept;
 
     [[nodiscard]] AuthorityGateResult authorize(
         const std::optional<AuthorityReceipt>& receipt,
@@ -38,7 +41,7 @@ public:
         std::string_view scope_sha256) const;
 
 private:
-    const AuthorityVerifier& verifier_;
+    AuthorityLedger& ledger_;
 };
 
 [[nodiscard]] std::string destructive_execution_scope_sha256(
