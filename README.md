@@ -3,7 +3,7 @@
 **Codename:** The Ring  
 **Mission:** a memory-light, recursive, reality-aware AI development console for solo developers.
 
-GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, verification, capability-bus and governed-execution layer that decides which local model or deterministic tool may act on which layer of a developer's reality.
+GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, verification, capability-bus, governed-execution and transaction layer that decides which local model or deterministic tool may act on which layer of a developer's reality.
 
 ## L0 — Ring Foundation
 
@@ -59,46 +59,54 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 ## L11 — Native Local-Process Executor
 
-The Ring can now spawn its first governed OS process without introducing a shell surface:
+- registry-bound absolute executables and fixed argv contracts.
+- direct POSIX `fork` + `execve` and Windows `CreateProcessW`; no shell interpolation.
+- canonical working-root confinement, bounded explicit environment and stdout/stderr streaming into FORGE.
+- timeout/output budget exhaustion terminates the child.
 
-- `NativeProcessRegistry` binds an exact immutable `LOCAL_PROCESS` slot to an absolute executable path and fixed argv contract.
-- the request payload cannot select an executable or command string.
-- payload mode is either `NONE` or `SINGLE_ARGUMENT`; a payload is never split into shell tokens.
-- POSIX uses direct `fork` + `execve`; Windows uses direct `CreateProcessW` with explicit application path and argv quoting.
-- working directories are canonicalized and must stay beneath a registered working root.
-- environment entries are explicit, validated and bounded by count/bytes.
-- stdout and stderr stream into the existing bounded `ForgeOutputSink`.
-- the child is terminated when the FORGE output or wall-time ceiling is crossed.
-- exit status flows back through `ForgeExecutorReport`, so FORGE still owns `BUILD` / `TEST` / `TOOL` evidence semantics.
+## L12 — Execution Session / Transaction Orchestrator
+
+The Ring can now treat an autonomous task as one bounded, auditable transaction:
+
+- `ExecutionSessionOrchestrator` owns the lifecycle from CADDY routing through CLUBHOUSE, FORGE, executor evidence, ZENKAI verification and terminal DOJO commit.
+- every session has one opaque `correlation_id` plus immutable `guff:session:sha256:<digest>` identity.
+- the base FORGE invocation and every retry must retain the correlation prefix.
+- retries may mutate payload identity but cannot switch slot, capability or STRATA layer.
+- lifecycle events are bounded by count and per-event detail bytes.
+- verified artifacts are promoted as metadata only: name, locator, SHA-256 and byte count.
+- artifact count and aggregate byte budgets are hard ceilings; rejected candidates are counted without retaining bodies.
+- the result includes a compact `audit_sha256` over lifecycle metadata and the terminal DOJO identity.
+- sessions that reach ZENKAI are committed to DOJO as success/failure/aborted learning evidence.
+- a verified execution that cannot commit its DOJO terminal record is not labeled a fully completed session.
 
 ```text
-CADDY
-  |
-  v
-CLUBHOUSE ---- slot capability / permission / STRATA
-  |
- READY
-  |
-  v
-FORGE -------- payload hash / bytes / budgets
-  |
-  v
-NATIVE PROCESS REGISTRY
- fixed executable / argv / root / environment
-  |
-  v
-OS CHILD PROCESS
- execve | CreateProcessW
-  |
- stdout + stderr
-  v
-ForgeOutputSink
-  |
-  v
-ZENKAI EVIDENCE
-  |
-  v
-DOJO
+CORRELATION ID
+      |
+      v
+    CADDY
+      |
+      v
+ CLUBHOUSE
+      |
+      v
+    FORGE
+      |
+      v
+NATIVE / SLOT EXECUTOR
+      |
+      v
+   ZENKAI  <---- bounded retry mutation
+      |
+   VERIFIED
+      |
+      v
+ARTIFACT METADATA PROMOTION
+      |
+      v
+     DOJO
+      |
+      v
+SESSION COMMIT + AUDIT SHA
 ```
 
 ## Design laws
@@ -135,6 +143,10 @@ DOJO
 30. **Shell syntax is data.** Native payloads are never interpolated through a shell.
 31. **Process reality is scoped.** Working directories must remain inside the registered root and environment state is bounded.
 32. **Budgets terminate work.** Native children are stopped when time/output authority is exhausted.
+33. **One task has one transaction identity.** Correlation survives routing, execution, verification and learning-record commit.
+34. **Retries cannot change the operation class.** Payloads may mutate, but slot, capability and STRATA remain fixed inside a session.
+35. **Artifacts remain external.** A session promotes bounded content-addressed metadata, not artifact bodies.
+36. **Completion includes the terminal record.** If DOJO cannot commit the terminal episode, L12 does not report a fully completed session.
 
 ## Build
 
@@ -146,4 +158,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L12 should add the first execution-session orchestrator: one bounded transaction linking CADDY → CLUBHOUSE → FORGE → native executor → ZENKAI → DOJO with a common correlation identity and explicit artifact/evidence promotion rules.
+L13 should add a durable transaction journal with explicit `BEGIN` / `COMMIT` / `ABORT` markers and crash-recovery inspection. Interrupted sessions should be discoverable without automatically replaying side effects or minting fresh retry authority.

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.12.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.13.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,6 +20,7 @@ add_library(guff_core STATIC
     src/clubhouse.cpp
     src/forge.cpp
     src/native_process.cpp
+    src/execution_session.cpp
     src/sha256.cpp
     src/model_manifest.cpp
     src/model_registry.cpp
@@ -94,4 +95,8 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_native_process tests/native_process.cpp)
     target_link_libraries(guff_native_process PRIVATE guff_core)
     add_test(NAME guff.native_process COMMAND guff_native_process)
+
+    add_executable(guff_execution_session tests/execution_session.cpp)
+    target_link_libraries(guff_execution_session PRIVATE guff_core)
+    add_test(NAME guff.execution_session COMMAND guff_execution_session)
 endif()
