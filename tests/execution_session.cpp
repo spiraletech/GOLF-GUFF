@@ -7,6 +7,7 @@
 #include "guff/model_registry.hpp"
 #include "guff/native_process.hpp"
 #include "guff/scorecard.hpp"
+#include "guff/session_journal.hpp"
 #include "guff/sha256.hpp"
 
 #include <cstdlib>
@@ -107,9 +108,9 @@ guff::ExecutionSessionRequest session_request(std::string correlation,
     request.session_budget.max_event_detail_bytes = 256U;
     request.session_budget.max_artifacts = 1U;
     request.session_budget.max_artifact_bytes = 1024U;
-    request.summary = "L12 correlated native execution regression";
+    request.summary = "L13 durable correlated native execution regression";
     request.recorded_at_utc = "2026-09-04T17:07:00-07:00";
-    request.dojo_tags = {"l12", "native-process"};
+    request.dojo_tags = {"l13", "native-process", "transaction-journal"};
     return request;
 }
 
@@ -150,11 +151,13 @@ int main(int argc, char** argv) {
     guff::Scorecard scorecard;
     guff::CaddyRouter router(models, scorecard);
     guff::DojoStore dojo(root / "dojo.store");
-    guff::ExecutionSessionOrchestrator orchestrator(router, clubhouse, forge, dojo);
+    guff::SessionJournal transaction_journal(root / "transactions.journal");
+    guff::ExecutionSessionOrchestrator orchestrator(
+        router, clubhouse, forge, dojo, &transaction_journal);
     const auto hardware = guff::detect_hardware_profile();
 
     const std::string literal_payload = "literal & | < > ^ % ! \"quoted\" \\ tail";
-    auto request = session_request("corr-l12-001", literal_payload);
+    auto request = session_request("corr-l13-001", literal_payload);
     const auto success = orchestrator.run(
         request,
         hardware,
@@ -181,10 +184,24 @@ int main(int argc, char** argv) {
     CHECK(success.rejected_artifacts == 1U);
     CHECK(success.promoted_artifact_bytes == 512U);
     CHECK(success.dojo_episode_id.has_value());
+    CHECK(success.journal_begin_record_sha256.has_value());
+    CHECK(success.journal_terminal_record_sha256.has_value());
+    CHECK(guff::is_sha256(*success.journal_begin_record_sha256));
+    CHECK(guff::is_sha256(*success.journal_terminal_record_sha256));
     CHECK(guff::is_sha256(success.audit_sha256));
     CHECK(success.session_id.starts_with("guff:session:sha256:"));
     CHECK(!success.events.empty());
     CHECK(!success.events_truncated);
+
+    const auto after_success = transaction_journal.inspect();
+    CHECK(after_success.healthy);
+    CHECK(after_success.records == 2U);
+    CHECK(after_success.interrupted.empty());
+
+    const auto duplicate_session = orchestrator.run(request, hardware, native);
+    CHECK(duplicate_session.status == guff::SessionStatus::JournalStoreFailed);
+    CHECK(!duplicate_session.last_execution.has_value());
+    CHECK(!duplicate_session.dojo_episode_id.has_value());
 
     guff::DojoQuery query;
     query.task = guff::TaskClass::Coding;
@@ -196,20 +213,27 @@ int main(int argc, char** argv) {
     bool saw_correlation = false;
     bool saw_session = false;
     for (const auto& tag : episodes.front().tags) {
-        if (tag == "correlation:corr-l12-001") saw_correlation = true;
+        if (tag == "correlation:corr-l13-001") saw_correlation = true;
         if (tag == "session:" + success.session_id) saw_session = true;
     }
     CHECK(saw_correlation);
     CHECK(saw_session);
 
-    std::ifstream journal(root / "dojo.store");
-    CHECK(journal.good());
-    const std::string journal_text((std::istreambuf_iterator<char>(journal)),
-                                   std::istreambuf_iterator<char>());
-    CHECK(journal_text.find(literal_payload) == std::string::npos);
-    journal.close();
+    std::ifstream dojo_journal(root / "dojo.store");
+    CHECK(dojo_journal.good());
+    const std::string dojo_text((std::istreambuf_iterator<char>(dojo_journal)),
+                                std::istreambuf_iterator<char>());
+    CHECK(dojo_text.find(literal_payload) == std::string::npos);
+    dojo_journal.close();
 
-    auto retry_request = session_request("corr-l12-002", "fail-first");
+    std::ifstream transaction_file(root / "transactions.journal");
+    CHECK(transaction_file.good());
+    const std::string transaction_text((std::istreambuf_iterator<char>(transaction_file)),
+                                       std::istreambuf_iterator<char>());
+    CHECK(transaction_text.find(literal_payload) == std::string::npos);
+    transaction_file.close();
+
+    auto retry_request = session_request("corr-l13-002", "fail-first");
     retry_request.session_budget.max_artifacts = 0U;
     const auto retried = orchestrator.run(
         retry_request,
@@ -217,49 +241,61 @@ int main(int argc, char** argv) {
         native,
         [](std::size_t attempt, std::string_view) -> std::optional<guff::ForgeExecutionRequest> {
             if (attempt != 1U) return std::nullopt;
-            return forge_request("corr-l12-002", "attempt:1", "retry-ok");
+            return forge_request("corr-l13-002", "attempt:1", "retry-ok");
         });
     CHECK(retried.succeeded());
     CHECK(retried.zenkai.attempts == 2U);
     CHECK(retried.last_execution.has_value());
     CHECK(retried.last_execution->exit_code == 0);
+    CHECK(retried.journal_terminal_record_sha256.has_value());
 
-    auto bad_correlation = session_request("corr-l12-003", "ok");
+    auto bad_correlation = session_request("corr-l13-003", "ok");
     bad_correlation.forge_request.invocation.invocation_id = "different:attempt:0";
     const auto invalid = orchestrator.run(bad_correlation, hardware, native);
     CHECK(invalid.status == guff::SessionStatus::InvalidRequest);
     CHECK(!invalid.dojo_episode_id.has_value());
+    CHECK(!invalid.journal_begin_record_sha256.has_value());
 
-    auto denied = session_request("corr-l12-004", "ok");
-    denied.forge_request = forge_request("corr-l12-004", "attempt:0", "ok", false);
+    auto denied = session_request("corr-l13-004", "ok");
+    denied.forge_request = forge_request("corr-l13-004", "attempt:0", "ok", false);
     const auto rejected = orchestrator.run(denied, hardware, native);
     CHECK(rejected.status == guff::SessionStatus::InvocationRejected);
     CHECK(!rejected.dojo_episode_id.has_value());
+    CHECK(rejected.journal_begin_record_sha256.has_value());
+    CHECK(rejected.journal_terminal_record_sha256.has_value());
 
-    auto human = session_request("corr-l12-005", "ok");
+    auto human = session_request("corr-l13-005", "ok");
     human.route_request.signal.destructive = true;
     human.route_request.signal.uncertainty = 0.80;
     const auto route_rejected = orchestrator.run(human, hardware, native);
     CHECK(route_rejected.status == guff::SessionStatus::RouteRejected);
     CHECK(route_rejected.route.status == guff::ModelRouteStatus::HumanReviewRequired);
+    CHECK(route_rejected.journal_terminal_record_sha256.has_value());
 
-    auto switched = session_request("corr-l12-006", "fail-first");
+    auto switched = session_request("corr-l13-006", "fail-first");
     const auto switch_rejected = orchestrator.run(
         switched,
         hardware,
         native,
         [](std::size_t attempt, std::string_view) -> std::optional<guff::ForgeExecutionRequest> {
             if (attempt != 1U) return std::nullopt;
-            auto retry = forge_request("corr-l12-006", "attempt:1", "retry-ok");
+            auto retry = forge_request("corr-l13-006", "attempt:1", "retry-ok");
             retry.invocation.layer = guff::RealityLayer::Runtime;
             return retry;
         });
     CHECK(switch_rejected.status == guff::SessionStatus::VerificationFailed);
     CHECK(switch_rejected.zenkai.stop_reason == guff::ZenkaiStopReason::FatalFailure);
     CHECK(switch_rejected.dojo_episode_id.has_value());
+    CHECK(switch_rejected.journal_terminal_record_sha256.has_value());
 
     const auto all_episodes = dojo.replay();
     CHECK(all_episodes.size() == 3U);
+
+    const auto final_journal = transaction_journal.inspect();
+    CHECK(final_journal.healthy);
+    CHECK(final_journal.records == 10U);
+    CHECK(final_journal.interrupted.empty());
+    CHECK(guff::is_sha256(final_journal.head_sha256));
 
     std::filesystem::remove_all(root, ec);
     return 0;
