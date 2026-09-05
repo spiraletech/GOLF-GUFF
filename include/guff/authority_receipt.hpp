@@ -37,6 +37,14 @@ struct AuthorityEnvelope {
     std::uint32_t max_uses{0U};
     std::string nonce;
     std::string scope_sha256;
+
+    // Schema v3 delegation fields. The opaque L15/L17 scope hash is replaced by
+    // a signed hierarchical scope path so attenuation can be proven instead of guessed.
+    std::string parent_receipt_id;
+    std::uint32_t delegation_depth{0U};
+    std::uint32_t max_delegation_depth{0U};
+    std::string scope_path;
+    std::vector<std::string> capabilities;
 };
 
 struct AuthorityReceipt {
@@ -86,6 +94,14 @@ struct AuthorityVerificationResult {
     const AuthorityVerifier& verifier,
     AuthorityPurpose expected_purpose,
     std::string_view expected_subject_id);
+
+// Schema-v3 attenuation primitives. Equality is permitted; callers that mint a
+// child must additionally prove at least one authority dimension became stricter.
+[[nodiscard]] bool authority_scope_contains(std::string_view parent_scope_path,
+                                            std::string_view child_scope_path) noexcept;
+[[nodiscard]] bool authority_capabilities_contain(
+    const std::vector<std::string>& parent,
+    const std::vector<std::string>& child);
 
 [[nodiscard]] std::string_view to_string(AuthorityPurpose purpose) noexcept;
 [[nodiscard]] std::string_view to_string(AuthorityReceiptStatus status) noexcept;
