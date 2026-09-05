@@ -1,5 +1,6 @@
 #include "guff/execution_session.hpp"
 
+#include "guff/session_journal.hpp"
 #include "guff/sha256.hpp"
 
 #include <algorithm>
@@ -61,6 +62,39 @@ std::string make_session_id(const ExecutionSessionRequest& request,
               << request.forge_request.invocation.input_sha256 << '\n'
               << request.forge_request.invocation.payload_bytes;
     return "guff:session:sha256:" + sha256(canonical.str());
+}
+
+std::string request_contract_digest(const ExecutionSessionRequest& request,
+                                    const HardwareProfile& hardware) {
+    auto permissions = request.forge_request.invocation.permission_tokens;
+    std::sort(permissions.begin(), permissions.end());
+
+    std::ostringstream canonical;
+    canonical << make_session_id(request, hardware) << '\n'
+              << hardware.immutable_id() << '\n'
+              << static_cast<unsigned>(request.route_request.task) << '\n'
+              << request.route_request.profile_name << '\n'
+              << request.forge_request.invocation.slot_id << '\n'
+              << static_cast<unsigned>(request.forge_request.invocation.capability) << '\n'
+              << static_cast<unsigned>(request.forge_request.invocation.layer) << '\n'
+              << request.forge_request.invocation.input_sha256 << '\n'
+              << request.forge_request.invocation.payload_bytes << '\n'
+              << request.forge_request.budget.max_wall_time_ms << '\n'
+              << request.forge_request.budget.max_output_bytes << '\n'
+              << request.zenkai_budget.max_attempts << '\n'
+              << request.zenkai_budget.max_tool_events << '\n'
+              << request.zenkai_budget.max_evidence_items << '\n'
+              << request.zenkai_budget.max_evidence_bytes << '\n'
+              << request.zenkai_budget.max_trace_entries << '\n'
+              << request.zenkai_budget.acceptance_confidence << '\n'
+              << request.zenkai_budget.max_detail_bytes << '\n'
+              << static_cast<unsigned>(request.zenkai_policy.retry_authority) << '\n'
+              << request.session_budget.max_events << '\n'
+              << request.session_budget.max_event_detail_bytes << '\n'
+              << request.session_budget.max_artifacts << '\n'
+              << request.session_budget.max_artifact_bytes << '\n';
+    for (const auto& permission : permissions) canonical << permission << '\n';
+    return sha256(canonical.str());
 }
 
 std::string execution_state(const std::string& correlation_id,
@@ -162,8 +196,9 @@ ExecutionSessionOrchestrator::ExecutionSessionOrchestrator(
     const CaddyRouter& router,
     const ClubhouseRegistry& clubhouse,
     const ForgeAdapter& forge,
-    DojoStore& dojo) noexcept
-    : router_(router), clubhouse_(clubhouse), forge_(forge), dojo_(dojo) {}
+    DojoStore& dojo,
+    SessionJournal* journal) noexcept
+    : router_(router), clubhouse_(clubhouse), forge_(forge), dojo_(dojo), journal_(journal) {}
 
 ExecutionSessionResult ExecutionSessionOrchestrator::run(
     const ExecutionSessionRequest& request,
@@ -175,8 +210,41 @@ ExecutionSessionResult ExecutionSessionOrchestrator::run(
     ExecutionSessionResult result;
     result.correlation_id = request.correlation_id;
     result.session_id = make_session_id(request, hardware);
+    const auto request_sha256 = request_contract_digest(request, hardware);
+    bool journal_open = false;
 
     auto finalize = [&]() -> ExecutionSessionResult {
+        if (journal_ && journal_open) {
+            const auto terminal_kind = result.status == SessionStatus::Completed
+                ? JournalRecordKind::Commit
+                : JournalRecordKind::Abort;
+            add_event(result, request.session_budget, SessionStage::JournalTerminal,
+                      std::string(to_string(terminal_kind)),
+                      "terminal journal record requested after audit freeze");
+            result.audit_sha256 = audit_digest(result);
+            const auto terminal = journal_->finish({
+                .kind = terminal_kind,
+                .session_id = result.session_id,
+                .correlation_id = request.correlation_id,
+                .request_sha256 = request_sha256,
+                .audit_sha256 = result.audit_sha256,
+                .dojo_episode_id = result.dojo_episode_id.value_or(std::string{}),
+                .terminal_status = std::string(to_string(result.status)),
+                .recorded_at_utc = request.recorded_at_utc,
+            });
+            if (!terminal.ok()) {
+                result.status = SessionStatus::JournalStoreFailed;
+                result.reason = terminal.errors.empty()
+                    ? "transaction journal failed to append terminal record"
+                    : terminal.errors.front();
+                add_event(result, request.session_budget, SessionStage::Aborted,
+                          std::string(to_string(result.status)), result.reason);
+                result.audit_sha256 = audit_digest(result);
+            } else {
+                result.journal_terminal_record_sha256 = terminal.record_sha256;
+            }
+            return std::move(result);
+        }
         result.audit_sha256 = audit_digest(result);
         return std::move(result);
     };
@@ -192,6 +260,30 @@ ExecutionSessionResult ExecutionSessionOrchestrator::run(
 
     add_event(result, request.session_budget, SessionStage::Created,
               "SESSION_CREATED", "correlated transaction accepted");
+
+    if (journal_) {
+        const auto begin = journal_->begin({
+            .session_id = result.session_id,
+            .correlation_id = request.correlation_id,
+            .request_sha256 = request_sha256,
+            .recorded_at_utc = request.recorded_at_utc,
+        });
+        if (!begin.ok()) {
+            result.status = SessionStatus::JournalStoreFailed;
+            result.reason = begin.errors.empty()
+                ? "transaction journal rejected BEGIN"
+                : begin.errors.front();
+            add_event(result, request.session_budget, SessionStage::JournalBegin,
+                      std::string(to_string(begin.status)), result.reason);
+            add_event(result, request.session_budget, SessionStage::Aborted,
+                      std::string(to_string(result.status)), result.reason);
+            return finalize();
+        }
+        journal_open = true;
+        result.journal_begin_record_sha256 = begin.record_sha256;
+        add_event(result, request.session_budget, SessionStage::JournalBegin,
+                  std::string(to_string(begin.status)), "durable BEGIN committed before routing/execution");
+    }
 
     result.route = router_.select(request.route_request, hardware);
     add_event(result, request.session_budget, SessionStage::Routed,
@@ -375,6 +467,7 @@ std::string_view to_string(SessionStatus status) noexcept {
     case SessionStatus::InvocationRejected: return "INVOCATION_REJECTED";
     case SessionStatus::VerificationFailed: return "VERIFICATION_FAILED";
     case SessionStatus::DojoStoreFailed: return "DOJO_STORE_FAILED";
+    case SessionStatus::JournalStoreFailed: return "JOURNAL_STORE_FAILED";
     }
     return "INVALID_REQUEST";
 }
@@ -382,12 +475,14 @@ std::string_view to_string(SessionStatus status) noexcept {
 std::string_view to_string(SessionStage stage) noexcept {
     switch (stage) {
     case SessionStage::Created: return "CREATED";
+    case SessionStage::JournalBegin: return "JOURNAL_BEGIN";
     case SessionStage::Routed: return "ROUTED";
     case SessionStage::SlotResolved: return "SLOT_RESOLVED";
     case SessionStage::Executing: return "EXECUTING";
     case SessionStage::Verifying: return "VERIFYING";
     case SessionStage::ArtifactPromotion: return "ARTIFACT_PROMOTION";
     case SessionStage::DojoRecord: return "DOJO_RECORD";
+    case SessionStage::JournalTerminal: return "JOURNAL_TERMINAL";
     case SessionStage::Completed: return "COMPLETED";
     case SessionStage::Aborted: return "ABORTED";
     }

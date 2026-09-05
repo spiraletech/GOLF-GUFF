@@ -66,47 +66,58 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 ## L12 — Execution Session / Transaction Orchestrator
 
-The Ring can now treat an autonomous task as one bounded, auditable transaction:
-
-- `ExecutionSessionOrchestrator` owns the lifecycle from CADDY routing through CLUBHOUSE, FORGE, executor evidence, ZENKAI verification and terminal DOJO commit.
-- every session has one opaque `correlation_id` plus immutable `guff:session:sha256:<digest>` identity.
-- the base FORGE invocation and every retry must retain the correlation prefix.
+- one opaque correlation ID and immutable `guff:session:sha256:<digest>` identity across CADDY → CLUBHOUSE → FORGE → executor → ZENKAI → DOJO.
 - retries may mutate payload identity but cannot switch slot, capability or STRATA layer.
-- lifecycle events are bounded by count and per-event detail bytes.
-- verified artifacts are promoted as metadata only: name, locator, SHA-256 and byte count.
-- artifact count and aggregate byte budgets are hard ceilings; rejected candidates are counted without retaining bodies.
-- the result includes a compact `audit_sha256` over lifecycle metadata and the terminal DOJO identity.
-- sessions that reach ZENKAI are committed to DOJO as success/failure/aborted learning evidence.
-- a verified execution that cannot commit its DOJO terminal record is not labeled a fully completed session.
+- lifecycle events and artifact metadata promotion are bounded.
+- verified artifact bodies remain external; sessions retain name, locator, SHA-256 and byte count only.
+- a task is not reported as completed if its terminal DOJO episode cannot be committed.
+
+## L13 — Durable Transaction Journal / Crash Recovery
+
+The Ring now records transaction authority before execution can begin:
+
+- `SessionJournal` is an append-only cold journal with explicit `BEGIN`, `COMMIT` and `ABORT` records.
+- the orchestrator must commit `BEGIN` before CADDY/CLUBHOUSE/FORGE can reach an executor when journaling is enabled.
+- duplicate immutable session IDs are refused before execution, preventing accidental replay of the same transaction identity.
+- every journal record carries a global sequence number, previous-record SHA-256 and its own content-derived SHA-256.
+- recovery inspection validates the entire chain plus per-session BEGIN → terminal transitions before permitting new journal appends.
+- an interrupted session is a valid `BEGIN` with no terminal record.
+- interrupted sessions expose only compact identity/provenance metadata and always return `replay_authorized=false` and `requires_human_decision=true`.
+- recovery inspection does not expose any API that can execute, resume or retry a transaction.
+- `COMMIT` is written only for a completed verified session; every other journaled terminal state becomes `ABORT`.
+- terminal records bind the session request digest, final session audit SHA-256 and optional DOJO episode identity.
+- payloads, tool output, source slices and artifact bodies are absent from the transaction journal.
+- if terminal journal append fails after work occurred, the session reports `JOURNAL_STORE_FAILED`; recovery therefore sees the durable BEGIN as interrupted rather than fabricating a successful close.
 
 ```text
-CORRELATION ID
+SESSION REQUEST
       |
       v
-    CADDY
+ durable BEGIN
       |
       v
- CLUBHOUSE
-      |
-      v
-    FORGE
-      |
-      v
-NATIVE / SLOT EXECUTOR
-      |
-      v
-   ZENKAI  <---- bounded retry mutation
-      |
-   VERIFIED
-      |
-      v
-ARTIFACT METADATA PROMOTION
-      |
-      v
-     DOJO
-      |
-      v
-SESSION COMMIT + AUDIT SHA
+CADDY -> CLUBHOUSE -> FORGE -> EXECUTOR
+                         |
+                         v
+                      ZENKAI
+                         |
+                         v
+                       DOJO
+                         |
+                         v
+                 SESSION AUDIT SHA
+                         |
+                 +-------+-------+
+                 |               |
+               COMMIT          ABORT
+
+PROCESS CRASH AFTER BEGIN
+          |
+          v
+RECOVERY INSPECTION
+  session / correlation / request hash
+  replay_authorized = false
+  requires_human_decision = true
 ```
 
 ## Design laws
@@ -146,7 +157,11 @@ SESSION COMMIT + AUDIT SHA
 33. **One task has one transaction identity.** Correlation survives routing, execution, verification and learning-record commit.
 34. **Retries cannot change the operation class.** Payloads may mutate, but slot, capability and STRATA remain fixed inside a session.
 35. **Artifacts remain external.** A session promotes bounded content-addressed metadata, not artifact bodies.
-36. **Completion includes the terminal record.** If DOJO cannot commit the terminal episode, L12 does not report a fully completed session.
+36. **Completion includes the terminal record.** If DOJO cannot commit the terminal episode, the session is not fully completed.
+37. **Durable intent precedes side effects.** A journaled session cannot execute until its BEGIN record exists.
+38. **Journal integrity is global.** Sequence and hash-chain failure blocks further transaction appends.
+39. **Recovery is observation, not authority.** Discovering interrupted work never grants replay or retry permission.
+40. **Missing terminal state stays unresolved.** A failed terminal append leaves the BEGIN visible for human recovery instead of inventing closure.
 
 ## Build
 
@@ -158,4 +173,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L13 should add a durable transaction journal with explicit `BEGIN` / `COMMIT` / `ABORT` markers and crash-recovery inspection. Interrupted sessions should be discoverable without automatically replaying side effects or minting fresh retry authority.
+L14 should add an explicit recovery-decision protocol: human-authorized `DISMISS` / `RETRY_AS_NEW_SESSION` decisions over interrupted transaction metadata, with parent-session lineage and no reuse of the original session identity or retry authority.

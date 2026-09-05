@@ -21,6 +21,7 @@ add_library(guff_core STATIC
     src/forge.cpp
     src/native_process.cpp
     src/execution_session.cpp
+    src/session_journal.cpp
     src/sha256.cpp
     src/model_manifest.cpp
     src/model_registry.cpp
@@ -99,4 +100,8 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_execution_session tests/execution_session.cpp)
     target_link_libraries(guff_execution_session PRIVATE guff_core)
     add_test(NAME guff.execution_session COMMAND guff_execution_session)
+
+    add_executable(guff_session_journal tests/session_journal.cpp)
+    target_link_libraries(guff_session_journal PRIVATE guff_core)
+    add_test(NAME guff.session_journal COMMAND guff_session_journal)
 endif()
