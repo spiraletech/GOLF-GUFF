@@ -74,7 +74,7 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 ## L13 — Durable Transaction Journal / Crash Recovery
 
-The Ring now records transaction authority before execution can begin:
+The Ring records transaction authority before execution can begin:
 
 - `SessionJournal` is an append-only cold journal with explicit `BEGIN`, `COMMIT` and `ABORT` records.
 - the orchestrator must commit `BEGIN` before CADDY/CLUBHOUSE/FORGE can reach an executor when journaling is enabled.
@@ -85,39 +85,48 @@ The Ring now records transaction authority before execution can begin:
 - interrupted sessions expose only compact identity/provenance metadata and always return `replay_authorized=false` and `requires_human_decision=true`.
 - recovery inspection does not expose any API that can execute, resume or retry a transaction.
 - `COMMIT` is written only for a completed verified session; every other journaled terminal state becomes `ABORT`.
-- terminal records bind the session request digest, final session audit SHA-256 and optional DOJO episode identity.
 - payloads, tool output, source slices and artifact bodies are absent from the transaction journal.
-- if terminal journal append fails after work occurred, the session reports `JOURNAL_STORE_FAILED`; recovery therefore sees the durable BEGIN as interrupted rather than fabricating a successful close.
+
+## L14 — Recovery Decision Protocol
+
+L14 turns crash inspection into explicit, fresh authority without resurrecting the crashed transaction:
+
+- `RecoveryDecisionProtocol` supports only `DISMISS` and `RETRY_AS_NEW_SESSION`.
+- every recovery decision requires an explicit `RecoveryAuthorization` bound to the exact parent session ID and exact parent BEGIN record SHA-256.
+- the authorization is content-addressed as `guff:recovery-auth:sha256:<digest>`.
+- `DISMISS` closes the interrupted parent without creating a child or retry authority.
+- `RETRY_AS_NEW_SESSION` reserves a fresh child correlation ID in the hash-chained journal and prepares a new `ExecutionSessionRequest`.
+- the child receives a new correlation ID, new immutable session ID, new request digest, new BEGIN/terminal records and new DOJO episode.
+- any retry authority present in a reused template is overwritten by the new authorization's explicit child retry authority.
+- ordinary `SessionJournal::begin()` cannot consume a reserved recovery child correlation.
+- only `begin_recovery_child(parent_session_id, authorization_sha256)` can activate the reserved child identity.
+- recovery lineage remains inspectable as parent session → authorization SHA → child correlation → eventual child session.
+- schema-v1 L13 journal records remain readable; L14 writes schema-v2 records for recovery semantics.
 
 ```text
-SESSION REQUEST
+INTERRUPTED BEGIN
       |
       v
- durable BEGIN
-      |
-      v
-CADDY -> CLUBHOUSE -> FORGE -> EXECUTOR
-                         |
-                         v
-                      ZENKAI
-                         |
-                         v
-                       DOJO
-                         |
-                         v
-                 SESSION AUDIT SHA
-                         |
-                 +-------+-------+
-                 |               |
-               COMMIT          ABORT
-
-PROCESS CRASH AFTER BEGIN
-          |
-          v
-RECOVERY INSPECTION
-  session / correlation / request hash
-  replay_authorized = false
-  requires_human_decision = true
+HUMAN DECISION
+   /        \
+DISMISS   RETRY_AS_NEW_SESSION
+  |               |
+  v               v
+CLOSE PARENT   FRESH AUTH SHA
+                  |
+                  v
+          RESERVE NEW CORRELATION
+                  |
+                  v
+          NEW CHILD TRANSACTION
+                  |
+        CADDY -> CLUBHOUSE -> FORGE
+                  |
+                  v
+               ZENKAI
+                  |
+                  v
+                DOJO
 ```
 
 ## Design laws
@@ -162,6 +171,10 @@ RECOVERY INSPECTION
 38. **Journal integrity is global.** Sequence and hash-chain failure blocks further transaction appends.
 39. **Recovery is observation, not authority.** Discovering interrupted work never grants replay or retry permission.
 40. **Missing terminal state stays unresolved.** A failed terminal append leaves the BEGIN visible for human recovery instead of inventing closure.
+41. **Recovery decisions require fresh human authority.** Inspection alone can never choose DISMISS or RETRY.
+42. **Recovery retry creates a child transaction.** Parent correlation, session identity and execution state are never reused.
+43. **Retry authority is non-inheritable.** A recovery child receives only the retry authority explicitly present in the new recovery authorization.
+44. **Recovery lineage is journal-enforced.** Reserved child correlations can start only through the matching parent + authorization proof.
 
 ## Build
 
@@ -173,4 +186,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L14 should add an explicit recovery-decision protocol: human-authorized `DISMISS` / `RETRY_AS_NEW_SESSION` decisions over interrupted transaction metadata, with parent-session lineage and no reuse of the original session identity or retry authority.
+L15 should add authority receipts / signer interfaces for recovery and other high-impact actions: pluggable local user confirmation, signed decision envelopes and provenance verification without coupling the Ring core to one UI or identity provider.
