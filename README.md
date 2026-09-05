@@ -74,59 +74,61 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 ## L13 — Durable Transaction Journal / Crash Recovery
 
-The Ring records transaction authority before execution can begin:
-
-- `SessionJournal` is an append-only cold journal with explicit `BEGIN`, `COMMIT` and `ABORT` records.
-- the orchestrator must commit `BEGIN` before CADDY/CLUBHOUSE/FORGE can reach an executor when journaling is enabled.
-- duplicate immutable session IDs are refused before execution, preventing accidental replay of the same transaction identity.
-- every journal record carries a global sequence number, previous-record SHA-256 and its own content-derived SHA-256.
-- recovery inspection validates the entire chain plus per-session BEGIN → terminal transitions before permitting new journal appends.
-- an interrupted session is a valid `BEGIN` with no terminal record.
-- interrupted sessions expose only compact identity/provenance metadata and always return `replay_authorized=false` and `requires_human_decision=true`.
-- recovery inspection does not expose any API that can execute, resume or retry a transaction.
-- `COMMIT` is written only for a completed verified session; every other journaled terminal state becomes `ABORT`.
-- payloads, tool output, source slices and artifact bodies are absent from the transaction journal.
+- append-only `BEGIN`, `COMMIT` and `ABORT` transaction records.
+- `BEGIN` must commit before journaled execution can reach side effects.
+- global sequence + SHA-256 chaining detects corruption and blocks future appends.
+- interrupted sessions expose inspection metadata only; recovery never auto-replays them.
 
 ## L14 — Recovery Decision Protocol
 
-L14 turns crash inspection into explicit, fresh authority without resurrecting the crashed transaction:
+- only `DISMISS` and `RETRY_AS_NEW_SESSION` are allowed.
+- retry creates a fresh correlation/session identity and never inherits prior retry authority.
+- journal-enforced lineage binds parent → recovery authorization → reserved child → child session.
 
-- `RecoveryDecisionProtocol` supports only `DISMISS` and `RETRY_AS_NEW_SESSION`.
-- every recovery decision requires an explicit `RecoveryAuthorization` bound to the exact parent session ID and exact parent BEGIN record SHA-256.
-- the authorization is content-addressed as `guff:recovery-auth:sha256:<digest>`.
-- `DISMISS` closes the interrupted parent without creating a child or retry authority.
-- `RETRY_AS_NEW_SESSION` reserves a fresh child correlation ID in the hash-chained journal and prepares a new `ExecutionSessionRequest`.
-- the child receives a new correlation ID, new immutable session ID, new request digest, new BEGIN/terminal records and new DOJO episode.
-- any retry authority present in a reused template is overwritten by the new authorization's explicit child retry authority.
-- ordinary `SessionJournal::begin()` cannot consume a reserved recovery child correlation.
-- only `begin_recovery_child(parent_session_id, authorization_sha256)` can activate the reserved child identity.
-- recovery lineage remains inspectable as parent session → authorization SHA → child correlation → eventual child session.
-- schema-v1 L13 journal records remain readable; L14 writes schema-v2 records for recovery semantics.
+## L15 — Authority Receipts / Signer Interface
+
+- pluggable `AuthoritySigner` / `AuthorityVerifier` contracts.
+- content-addressed `guff:authority:sha256:<digest>` receipts bind purpose, subject, actor, signer, nonce and exact scope.
+- private signing material is never persisted in GUFF receipts.
+- SpiralOS barcode transport references receipts but does not grant authority itself.
+
+## L16 — Authority Gate
+
+- privileged boundaries consume signed receipts rather than raw approval booleans.
+- recovery requires `RECOVERY` authority bound to the exact parent/decision scope.
+- destructive execution requires `DESTRUCTIVE_EXECUTION` authority bound to the exact session/request/slot/input contract.
+- persistent SYMBIOSIS requires `PERSISTENT_SYMBIOSIS` authority; ephemeral session-local grants remain receipt-free.
+- rejected receipts produce zero executor calls and zero durable grants.
+
+## L17 — Authority Ledger / Replay + Revocation
+
+- receipt schema v2 cryptographically binds signer key ID, machine issue/expiry timestamps and signed `max_uses`.
+- `AuthorityLedger` maintains durable trusted signer-key metadata, key retirement/rotation, hard key revocation and receipt revocation.
+- `(signer, key, nonce)` is bound to the first consumed receipt ID; a different receipt reusing that nonce is rejected.
+- immutable receipt IDs have persistent bounded-use counters, including one-shot receipts.
+- authority events are append-only and globally SHA-256 chained.
+- usage is durably recorded before `AuthorityGate` returns `ALLOWED`; storage/integrity failure blocks the privileged operation.
+- schema-v1 receipts remain statically verifiable but cannot cross L17 privileged boundaries because they do not contain signed lifetime/use policy.
 
 ```text
-INTERRUPTED BEGIN
+SPIRAL BARCODE
       |
       v
-HUMAN DECISION
-   /        \
-DISMISS   RETRY_AS_NEW_SESSION
-  |               |
-  v               v
-CLOSE PARENT   FRESH AUTH SHA
-                  |
-                  v
-          RESERVE NEW CORRELATION
-                  |
-                  v
-          NEW CHILD TRANSACTION
-                  |
-        CADDY -> CLUBHOUSE -> FORGE
-                  |
-                  v
-               ZENKAI
-                  |
-                  v
-                DOJO
+L15 RECEIPT SIGNATURE
+      |
+      v
+L16 PURPOSE / SUBJECT / SCOPE
+      |
+      v
+L17 AUTHORITY LEDGER
+  | key active?
+  | not expired?
+  | not revoked?
+  | nonce valid?
+  | uses remaining?
+      |
+      v
+ ALLOW / REFUSE
 ```
 
 ## Design laws
@@ -175,6 +177,12 @@ CLOSE PARENT   FRESH AUTH SHA
 42. **Recovery retry creates a child transaction.** Parent correlation, session identity and execution state are never reused.
 43. **Retry authority is non-inheritable.** A recovery child receives only the retry authority explicitly present in the new recovery authorization.
 44. **Recovery lineage is journal-enforced.** Reserved child correlations can start only through the matching parent + authorization proof.
+45. **A signature is not timeless authority.** Current key, expiry, revocation and use state are checked at every privileged boundary.
+46. **Receipt policy is signed.** Key identity, expiry and use count cannot be changed without invalidating the receipt.
+47. **Authority consumption is durable before side effects.** If the usage event cannot be recorded, execution is refused.
+48. **Nonce reuse cannot mint fresh authority.** A signer-key nonce may bind to only one immutable receipt identity.
+49. **Key rotation is explicit.** Retiring issuance and hard revocation are separate state transitions.
+50. **Barcode transport is never the trust root.** Scan integrity only delivers a receipt reference; the Ring decides whether it remains authorized.
 
 ## Build
 
@@ -186,4 +194,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L15 should add authority receipts / signer interfaces for recovery and other high-impact actions: pluggable local user confirmation, signed decision envelopes and provenance verification without coupling the Ring core to one UI or identity provider.
+L18 should add authority delegation / attenuation: parent receipts may mint narrower child capabilities only when explicitly allowed, with monotonic scope reduction, shorter expiry, lower use budgets and auditable delegation lineage.
