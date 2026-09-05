@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.15.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.16.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,6 +23,7 @@ add_library(guff_core STATIC
     src/execution_session.cpp
     src/session_journal.cpp
     src/recovery_protocol.cpp
+    src/authority_receipt.cpp
     src/sha256.cpp
     src/model_manifest.cpp
     src/model_registry.cpp
@@ -109,4 +110,8 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_recovery_protocol tests/recovery_protocol.cpp)
     target_link_libraries(guff_recovery_protocol PRIVATE guff_core)
     add_test(NAME guff.recovery_protocol COMMAND guff_recovery_protocol)
+
+    add_executable(guff_authority_receipt tests/authority_receipt.cpp)
+    target_link_libraries(guff_authority_receipt PRIVATE guff_core)
+    add_test(NAME guff.authority_receipt COMMAND guff_authority_receipt)
 endif()
