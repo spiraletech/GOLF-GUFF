@@ -92,17 +92,6 @@ RecoveryDecisionResult RecoveryDecisionProtocol::decide(
         return result;
     }
 
-    const auto gate = authority_gate_.authorize(
-        authorization.authority_receipt,
-        AuthorityPurpose::Recovery,
-        authorization.parent_session_id,
-        recovery_authority_scope_sha256(authorization));
-    if (!gate.ok()) {
-        result.status = RecoveryDecisionStatus::AuthorizationRequired;
-        result.errors = gate.errors;
-        return result;
-    }
-
     const auto inspection = journal_.inspect();
     if (!inspection.healthy) {
         result.status = RecoveryDecisionStatus::JournalError;
@@ -131,6 +120,17 @@ RecoveryDecisionResult RecoveryDecisionProtocol::decide(
     if (authorization.decision == RecoveryDecision::RetryAsNewSession && !child_template) {
         result.status = RecoveryDecisionStatus::Invalid;
         result.errors.emplace_back("RETRY_AS_NEW_SESSION requires a fresh child request template");
+        return result;
+    }
+
+    const auto gate = authority_gate_.authorize(
+        authorization.authority_receipt,
+        AuthorityPurpose::Recovery,
+        authorization.parent_session_id,
+        recovery_authority_scope_sha256(authorization));
+    if (!gate.ok()) {
+        result.status = RecoveryDecisionStatus::AuthorizationRequired;
+        result.errors = gate.errors;
         return result;
     }
 
