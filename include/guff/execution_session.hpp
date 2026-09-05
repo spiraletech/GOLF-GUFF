@@ -16,23 +16,28 @@
 
 namespace guff {
 
+class SessionJournal;
+
 enum class SessionStatus : std::uint8_t {
     Completed,
     InvalidRequest,
     RouteRejected,
     InvocationRejected,
     VerificationFailed,
-    DojoStoreFailed
+    DojoStoreFailed,
+    JournalStoreFailed
 };
 
 enum class SessionStage : std::uint8_t {
     Created,
+    JournalBegin,
     Routed,
     SlotResolved,
     Executing,
     Verifying,
     ArtifactPromotion,
     DojoRecord,
+    JournalTerminal,
     Completed,
     Aborted
 };
@@ -91,6 +96,8 @@ struct ExecutionSessionResult {
     std::vector<SessionEvent> events;
     bool events_truncated{false};
     std::optional<std::string> dojo_episode_id;
+    std::optional<std::string> journal_begin_record_sha256;
+    std::optional<std::string> journal_terminal_record_sha256;
     std::string audit_sha256;
     std::string reason;
 
@@ -110,7 +117,8 @@ public:
     ExecutionSessionOrchestrator(const CaddyRouter& router,
                                  const ClubhouseRegistry& clubhouse,
                                  const ForgeAdapter& forge,
-                                 DojoStore& dojo) noexcept;
+                                 DojoStore& dojo,
+                                 SessionJournal* journal = nullptr) noexcept;
 
     [[nodiscard]] ExecutionSessionResult run(
         const ExecutionSessionRequest& request,
@@ -125,6 +133,7 @@ private:
     const ClubhouseRegistry& clubhouse_;
     const ForgeAdapter& forge_;
     DojoStore& dojo_;
+    SessionJournal* journal_{nullptr};
 };
 
 [[nodiscard]] std::string_view to_string(SessionStatus status) noexcept;
