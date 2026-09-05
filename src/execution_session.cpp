@@ -10,13 +10,73 @@
 #include <utility>
 
 namespace guff {
+
+std::string execution_session_id(const ExecutionSessionRequest& request,
+                                 const HardwareProfile& hardware) {
+    std::ostringstream canonical;
+    canonical << request.correlation_id << '\n'
+              << hardware.immutable_id() << '\n'
+              << static_cast<unsigned>(request.route_request.task) << '\n'
+              << request.route_request.profile_name << '\n'
+              << request.forge_request.invocation.invocation_id << '\n'
+              << request.forge_request.invocation.slot_id << '\n'
+              << static_cast<unsigned>(request.forge_request.invocation.capability) << '\n'
+              << static_cast<unsigned>(request.forge_request.invocation.layer) << '\n'
+              << request.forge_request.invocation.input_sha256 << '\n'
+              << request.forge_request.invocation.payload_bytes << '\n'
+              << request.parent_session_id << '\n'
+              << request.recovery_authorization_sha256;
+    return "guff:session:sha256:" + sha256(canonical.str());
+}
+
+std::string execution_request_sha256(const ExecutionSessionRequest& request,
+                                     const HardwareProfile& hardware) {
+    auto permissions = request.forge_request.invocation.permission_tokens;
+    std::sort(permissions.begin(), permissions.end());
+
+    std::ostringstream canonical;
+    canonical << execution_session_id(request, hardware) << '\n'
+              << hardware.immutable_id() << '\n'
+              << static_cast<unsigned>(request.route_request.task) << '\n'
+              << request.route_request.profile_name << '\n'
+              << request.forge_request.invocation.slot_id << '\n'
+              << static_cast<unsigned>(request.forge_request.invocation.capability) << '\n'
+              << static_cast<unsigned>(request.forge_request.invocation.layer) << '\n'
+              << request.forge_request.invocation.input_sha256 << '\n'
+              << request.forge_request.invocation.payload_bytes << '\n'
+              << request.forge_request.budget.max_wall_time_ms << '\n'
+              << request.forge_request.budget.max_output_bytes << '\n'
+              << request.zenkai_budget.max_attempts << '\n'
+              << request.zenkai_budget.max_tool_events << '\n'
+              << request.zenkai_budget.max_evidence_items << '\n'
+              << request.zenkai_budget.max_evidence_bytes << '\n'
+              << request.zenkai_budget.max_trace_entries << '\n'
+              << request.zenkai_budget.acceptance_confidence << '\n'
+              << request.zenkai_budget.max_detail_bytes << '\n'
+              << static_cast<unsigned>(request.zenkai_policy.retry_authority) << '\n'
+              << request.session_budget.max_events << '\n'
+              << request.session_budget.max_event_detail_bytes << '\n'
+              << request.session_budget.max_artifacts << '\n'
+              << request.session_budget.max_artifact_bytes << '\n'
+              << request.parent_session_id << '\n'
+              << request.recovery_authorization_sha256 << '\n';
+    for (const auto& permission : permissions) canonical << permission << '\n';
+    return sha256(canonical.str());
+}
+
 namespace {
+
+constexpr std::string_view kSessionPrefix = "guff:session:sha256:";
 
 bool valid_correlation_id(std::string_view value) {
     if (value.empty() || value.size() > 96U) return false;
     return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
         return std::isalnum(ch) != 0 || ch == '-' || ch == '_' || ch == '.' || ch == ':';
     });
+}
+
+bool canonical_session_id(std::string_view value) noexcept {
+    return value.starts_with(kSessionPrefix) && is_sha256(value.substr(kSessionPrefix.size()));
 }
 
 bool correlated_invocation(std::string_view correlation_id,
@@ -46,55 +106,6 @@ void add_event(ExecutionSessionResult& result,
         detail.resize(budget.max_event_detail_bytes);
     }
     result.events.push_back({result.events.size(), stage, std::move(status), std::move(detail)});
-}
-
-std::string make_session_id(const ExecutionSessionRequest& request,
-                            const HardwareProfile& hardware) {
-    std::ostringstream canonical;
-    canonical << request.correlation_id << '\n'
-              << hardware.immutable_id() << '\n'
-              << static_cast<unsigned>(request.route_request.task) << '\n'
-              << request.route_request.profile_name << '\n'
-              << request.forge_request.invocation.invocation_id << '\n'
-              << request.forge_request.invocation.slot_id << '\n'
-              << static_cast<unsigned>(request.forge_request.invocation.capability) << '\n'
-              << static_cast<unsigned>(request.forge_request.invocation.layer) << '\n'
-              << request.forge_request.invocation.input_sha256 << '\n'
-              << request.forge_request.invocation.payload_bytes;
-    return "guff:session:sha256:" + sha256(canonical.str());
-}
-
-std::string request_contract_digest(const ExecutionSessionRequest& request,
-                                    const HardwareProfile& hardware) {
-    auto permissions = request.forge_request.invocation.permission_tokens;
-    std::sort(permissions.begin(), permissions.end());
-
-    std::ostringstream canonical;
-    canonical << make_session_id(request, hardware) << '\n'
-              << hardware.immutable_id() << '\n'
-              << static_cast<unsigned>(request.route_request.task) << '\n'
-              << request.route_request.profile_name << '\n'
-              << request.forge_request.invocation.slot_id << '\n'
-              << static_cast<unsigned>(request.forge_request.invocation.capability) << '\n'
-              << static_cast<unsigned>(request.forge_request.invocation.layer) << '\n'
-              << request.forge_request.invocation.input_sha256 << '\n'
-              << request.forge_request.invocation.payload_bytes << '\n'
-              << request.forge_request.budget.max_wall_time_ms << '\n'
-              << request.forge_request.budget.max_output_bytes << '\n'
-              << request.zenkai_budget.max_attempts << '\n'
-              << request.zenkai_budget.max_tool_events << '\n'
-              << request.zenkai_budget.max_evidence_items << '\n'
-              << request.zenkai_budget.max_evidence_bytes << '\n'
-              << request.zenkai_budget.max_trace_entries << '\n'
-              << request.zenkai_budget.acceptance_confidence << '\n'
-              << request.zenkai_budget.max_detail_bytes << '\n'
-              << static_cast<unsigned>(request.zenkai_policy.retry_authority) << '\n'
-              << request.session_budget.max_events << '\n'
-              << request.session_budget.max_event_detail_bytes << '\n'
-              << request.session_budget.max_artifacts << '\n'
-              << request.session_budget.max_artifact_bytes << '\n';
-    for (const auto& permission : permissions) canonical << permission << '\n';
-    return sha256(canonical.str());
 }
 
 std::string execution_state(const std::string& correlation_id,
@@ -183,6 +194,17 @@ std::vector<std::string> validate_request(const ExecutionSessionRequest& request
     if (request.session_budget.max_event_detail_bytes == 0U) {
         errors.emplace_back("session max_event_detail_bytes must be greater than zero");
     }
+    const bool has_parent = !request.parent_session_id.empty();
+    const bool has_authorization = !request.recovery_authorization_sha256.empty();
+    if (has_parent != has_authorization) {
+        errors.emplace_back("recovery lineage requires both parent_session_id and authorization SHA-256");
+    }
+    if (has_parent && !canonical_session_id(request.parent_session_id)) {
+        errors.emplace_back("parent_session_id must be canonical");
+    }
+    if (has_authorization && !is_sha256(request.recovery_authorization_sha256)) {
+        errors.emplace_back("recovery_authorization_sha256 must be SHA-256");
+    }
     return errors;
 }
 
@@ -209,8 +231,8 @@ ExecutionSessionResult ExecutionSessionOrchestrator::run(
     const ArtifactCollector& artifact_collector) const {
     ExecutionSessionResult result;
     result.correlation_id = request.correlation_id;
-    result.session_id = make_session_id(request, hardware);
-    const auto request_sha256 = request_contract_digest(request, hardware);
+    result.session_id = execution_session_id(request, hardware);
+    const auto request_sha256 = execution_request_sha256(request, hardware);
     bool journal_open = false;
 
     auto finalize = [&]() -> ExecutionSessionResult {
@@ -257,17 +279,32 @@ ExecutionSessionResult ExecutionSessionOrchestrator::run(
                   std::string(to_string(result.status)), result.reason);
         return finalize();
     }
+    const bool recovery_child = !request.parent_session_id.empty();
+    if (recovery_child && !journal_) {
+        result.status = SessionStatus::InvalidRequest;
+        result.reason = "recovery child requires a transaction journal to prove fresh authority";
+        add_event(result, request.session_budget, SessionStage::Aborted,
+                  std::string(to_string(result.status)), result.reason);
+        return finalize();
+    }
 
     add_event(result, request.session_budget, SessionStage::Created,
-              "SESSION_CREATED", "correlated transaction accepted");
+              "SESSION_CREATED", recovery_child
+                  ? "fresh recovery-child transaction accepted"
+                  : "correlated transaction accepted");
 
     if (journal_) {
-        const auto begin = journal_->begin({
+        const JournalBegin begin_record{
             .session_id = result.session_id,
             .correlation_id = request.correlation_id,
             .request_sha256 = request_sha256,
             .recorded_at_utc = request.recorded_at_utc,
-        });
+        };
+        const auto begin = recovery_child
+            ? journal_->begin_recovery_child(begin_record,
+                                             request.parent_session_id,
+                                             request.recovery_authorization_sha256)
+            : journal_->begin(begin_record);
         if (!begin.ok()) {
             result.status = SessionStatus::JournalStoreFailed;
             result.reason = begin.errors.empty()
@@ -282,7 +319,9 @@ ExecutionSessionResult ExecutionSessionOrchestrator::run(
         journal_open = true;
         result.journal_begin_record_sha256 = begin.record_sha256;
         add_event(result, request.session_budget, SessionStage::JournalBegin,
-                  std::string(to_string(begin.status)), "durable BEGIN committed before routing/execution");
+                  std::string(to_string(begin.status)), recovery_child
+                      ? "authorized recovery-child BEGIN committed before routing/execution"
+                      : "durable BEGIN committed before routing/execution");
     }
 
     result.route = router_.select(request.route_request, hardware);
@@ -415,6 +454,10 @@ ExecutionSessionResult ExecutionSessionOrchestrator::run(
     tags.push_back("session:" + result.session_id);
     tags.push_back("artifacts:" + std::to_string(result.artifacts.size()));
     tags.push_back("artifact-rejections:" + std::to_string(result.rejected_artifacts));
+    if (recovery_child) {
+        tags.push_back("recovery-parent:" + request.parent_session_id);
+        tags.push_back("recovery-authorization:" + request.recovery_authorization_sha256);
+    }
 
     const auto model_id = result.route.selected_model_id.value_or(std::string{});
     auto episode = make_dojo_episode(
