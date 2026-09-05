@@ -8,6 +8,7 @@
 #include "guff/reality.hpp"
 #include "guff/scorecard.hpp"
 #include "guff/scorecard_store.hpp"
+#include "guff/session_journal.hpp"
 #include "guff/sha256.hpp"
 #include "guff/symbiosis_ledger.hpp"
 #include "guff/zenkai.hpp"
@@ -20,12 +21,14 @@ int main() {
     guff::RealityStack reality;
     reality.observe({guff::RealityLayer::Project, "spiraletech/GOLF-GUFF", "ring", 1.0});
     reality.observe({guff::RealityLayer::Runtime, "native-cpp20", "guff-core", 1.0});
-    reality.observe({guff::RealityLayer::Semantic, "execution-session-orchestrator", "L12", 1.0});
+    reality.observe({guff::RealityLayer::Semantic, "transaction-journal-recovery", "L13", 1.0});
 
     const auto hardware = guff::detect_hardware_profile();
     guff::ModelRegistry registry;
     guff::Scorecard scorecard;
     guff::ScorecardStore store(std::filesystem::path("guff-scorecard.store"));
+    guff::SessionJournal transaction_journal(std::filesystem::path("guff-transactions.journal"));
+    const auto recovery = transaction_journal.inspect();
     guff::CaddyRouter router(registry, scorecard);
 
     guff::SourceGrant tool_grant;
@@ -52,7 +55,7 @@ int main() {
     const auto delta = leech.observe_text(
         tool_grant,
         "tool://guff/bootstrap",
-        "L12 execution session orchestrator online");
+        "L13 durable transaction journal and crash recovery online");
 
     if (delta.current) {
         static_cast<void>(symbiosis.stamp_observation(
@@ -63,7 +66,7 @@ int main() {
     if (auto slice = leech.slice_text(
             tool_grant,
             "tool://guff/bootstrap",
-            "L12 execution session orchestrator online",
+            "L13 durable transaction journal and crash recovery online",
             0U,
             1024U)) {
         static_cast<void>(context.add(std::move(*slice)));
@@ -146,7 +149,7 @@ int main() {
             return guff::ForgeExecutorReport{true, 0, 5U};
         });
 
-    std::cout << "GOLF GUFF / RING L12\n";
+    std::cout << "GOLF GUFF / RING L13\n";
     std::cout << "REALITY: " << reality.describe() << '\n';
     std::cout << "HARDWARE-ID: " << hardware.immutable_id() << '\n';
     std::cout << "SCORECARD-STORE: " << store.path().string() << " (lazy hydration)\n";
@@ -169,6 +172,10 @@ int main() {
     std::cout << "NATIVE-PROCESS: bindings=" << native_processes.size()
               << " shell=disabled argv=direct\n";
     std::cout << "EXECUTION-SESSION: correlation=bounded dojo=terminal artifacts=metadata-only\n";
+    std::cout << "TRANSACTION-JOURNAL: healthy=" << (recovery.healthy ? "yes" : "no")
+              << " records=" << recovery.records
+              << " interrupted=" << recovery.interrupted.size()
+              << " replay=disabled\n";
     std::cout << "CADDY-ROUTER: " << guff::to_string(decision.status)
               << " depth=" << decision.recursion_depth
               << " verify=" << (decision.require_verification ? "yes" : "no") << '\n';
