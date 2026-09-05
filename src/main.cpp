@@ -22,7 +22,7 @@ int main() {
     guff::RealityStack reality;
     reality.observe({guff::RealityLayer::Project, "spiraletech/GOLF-GUFF", "ring", 1.0});
     reality.observe({guff::RealityLayer::Runtime, "native-cpp20", "guff-core", 1.0});
-    reality.observe({guff::RealityLayer::Semantic, "authority-delegation", "L18", 1.0});
+    reality.observe({guff::RealityLayer::Semantic, "delegation-key-handoff", "L19", 1.0});
 
     const auto hardware = guff::detect_hardware_profile();
     guff::ModelRegistry registry;
@@ -56,7 +56,7 @@ int main() {
     const auto delta = leech.observe_text(
         tool_grant,
         "tool://guff/bootstrap",
-        "L18 authority delegation online");
+        "L19 delegation key handoff online");
 
     if (delta.current) {
         static_cast<void>(symbiosis.stamp_observation(
@@ -67,7 +67,7 @@ int main() {
     if (auto slice = leech.slice_text(
             tool_grant,
             "tool://guff/bootstrap",
-            "L18 authority delegation online",
+            "L19 delegation key handoff online",
             0U,
             1024U)) {
         static_cast<void>(context.add(std::move(*slice)));
@@ -150,7 +150,7 @@ int main() {
             return guff::ForgeExecutorReport{true, 0, 5U};
         });
 
-    std::cout << "GOLF GUFF / RING L18\n";
+    std::cout << "GOLF GUFF / RING L19\n";
     std::cout << "REALITY: " << reality.describe() << '\n';
     std::cout << "HARDWARE-ID: " << hardware.immutable_id() << '\n';
     std::cout << "SCORECARD-STORE: " << store.path().string() << " (lazy hydration)\n";
@@ -182,6 +182,8 @@ int main() {
               << " use-budget=signed key-rotation=on\n";
     std::cout << "AUTHORITY-DELEGATION: scope=hierarchical capabilities=subset"
               << " uses=reserved ancestry=revocable depth=bounded\n";
+    std::cout << "SESSION-KEYS: voucher-backed=yes ephemeral-keys=branch-bound"
+              << " root-key=never-shared replay=durable revocation=two-plane\n";
     std::cout << "CADDY-ROUTER: " << guff::to_string(decision.status)
               << " depth=" << decision.recursion_depth
               << " verify=" << (decision.require_verification ? "yes" : "no") << '\n';
