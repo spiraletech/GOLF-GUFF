@@ -85,6 +85,19 @@ guff::DelegationRequest child_request(
     return request;
 }
 
+guff::AuthorityGateResult gate_use(
+    const guff::AuthorityGate& gate,
+    const std::optional<guff::AuthorityReceipt>& receipt,
+    std::string_view capability) {
+    if (!receipt) return {};
+    return gate.authorize(
+        receipt,
+        guff::AuthorityPurpose::CapabilityGrant,
+        receipt->envelope.subject_id,
+        receipt->envelope.scope_sha256,
+        capability);
+}
+
 } // namespace
 
 int main() {
@@ -149,44 +162,24 @@ int main() {
     CHECK(ledger.use_count(parent->receipt_id) == 1U);
     CHECK(ledger.delegated_uses(parent->receipt_id) == 2U);
 
-    const auto child_scope = child.child->envelope.scope_sha256;
-    auto child_use_one = gate.authorize(
-        child.child,
-        guff::AuthorityPurpose::CapabilityGrant,
-        child.child->envelope.subject_id,
-        child_scope);
+    auto missing_capability = gate_use(gate, child.child, "code:test");
+    CHECK(missing_capability.status == guff::AuthorityGateStatus::CapabilityMismatch);
+    CHECK(ledger.use_count(child.child->receipt_id) == 0U);
+
+    auto child_use_one = gate_use(gate, child.child, "code:build");
     CHECK(child_use_one.ok());
-    auto child_use_two = gate.authorize(
-        child.child,
-        guff::AuthorityPurpose::CapabilityGrant,
-        child.child->envelope.subject_id,
-        child_scope);
+    auto child_use_two = gate_use(gate, child.child, "code:build");
     CHECK(child_use_two.ok());
-    auto child_exhausted = gate.authorize(
-        child.child,
-        guff::AuthorityPurpose::CapabilityGrant,
-        child.child->envelope.subject_id,
-        child_scope);
+    auto child_exhausted = gate_use(gate, child.child, "code:build");
     CHECK(child_exhausted.status == guff::AuthorityGateStatus::LedgerRejected);
     CHECK(child_exhausted.ledger_status == guff::AuthorityLedgerStatus::UseLimitReached);
 
-    // The parent began with six uses. Delegation consumes one use and reserves two,
-    // leaving exactly three direct parent uses; the fourth must fail.
     for (int i = 0; i < 3; ++i) {
-        CHECK(gate.authorize(
-            parent,
-            guff::AuthorityPurpose::CapabilityGrant,
-            parent->envelope.subject_id,
-            parent->envelope.scope_sha256).ok());
+        CHECK(gate_use(gate, parent, "code:build").ok());
     }
-    auto parent_exhausted = gate.authorize(
-        parent,
-        guff::AuthorityPurpose::CapabilityGrant,
-        parent->envelope.subject_id,
-        parent->envelope.scope_sha256);
+    auto parent_exhausted = gate_use(gate, parent, "code:build");
     CHECK(parent_exhausted.ledger_status == guff::AuthorityLedgerStatus::UseLimitReached);
 
-    // Nested delegation proves budget conservation recursively.
     auto root_two = root_receipt(
         signer,
         "root-two",
@@ -209,26 +202,13 @@ int main() {
     CHECK(ledger.use_count(middle.child->receipt_id) == 1U);
     CHECK(ledger.delegated_uses(middle.child->receipt_id) == 2U);
 
-    CHECK(gate.authorize(
-        leaf.child, guff::AuthorityPurpose::CapabilityGrant,
-        leaf.child->envelope.subject_id, leaf.child->envelope.scope_sha256).ok());
-    CHECK(gate.authorize(
-        leaf.child, guff::AuthorityPurpose::CapabilityGrant,
-        leaf.child->envelope.subject_id, leaf.child->envelope.scope_sha256).ok());
-
-    // Five-use middle: one spent to delegate + two reserved leaves two direct uses.
-    CHECK(gate.authorize(
-        middle.child, guff::AuthorityPurpose::CapabilityGrant,
-        middle.child->envelope.subject_id, middle.child->envelope.scope_sha256).ok());
-    CHECK(gate.authorize(
-        middle.child, guff::AuthorityPurpose::CapabilityGrant,
-        middle.child->envelope.subject_id, middle.child->envelope.scope_sha256).ok());
-    CHECK(gate.authorize(
-        middle.child, guff::AuthorityPurpose::CapabilityGrant,
-        middle.child->envelope.subject_id, middle.child->envelope.scope_sha256).ledger_status ==
+    CHECK(gate_use(gate, leaf.child, "code:build").ok());
+    CHECK(gate_use(gate, leaf.child, "code:build").ok());
+    CHECK(gate_use(gate, middle.child, "code:test").ok());
+    CHECK(gate_use(gate, middle.child, "code:test").ok());
+    CHECK(gate_use(gate, middle.child, "code:test").ledger_status ==
           guff::AuthorityLedgerStatus::UseLimitReached);
 
-    // A delegated-looking child that was never registered cannot cross the gate.
     auto orphan_request = child_request(
         *root_two, "orphan", "project:spiraletech/GOLF-GUFF/docs",
         {"repo:read"}, 1'800U, 2'900U, 1U, 1U);
@@ -252,12 +232,9 @@ int main() {
     orphan_envelope.capabilities = orphan_request.capabilities;
     auto orphan = guff::issue_authority_receipt(orphan_envelope, signer);
     CHECK(orphan);
-    auto orphan_denied = gate.authorize(
-        orphan, guff::AuthorityPurpose::CapabilityGrant,
-        orphan->envelope.subject_id, orphan->envelope.scope_sha256);
+    auto orphan_denied = gate_use(gate, orphan, "repo:read");
     CHECK(orphan_denied.ledger_status == guff::AuthorityLedgerStatus::DelegationRejected);
 
-    // Parent revocation cascades to descendants even though their signatures remain valid.
     auto revocation_root = root_receipt(
         signer, "revocation-root", "project:spiraletech/GOLF-GUFF",
         {"code:build", "code:test"}, 1'500U, 5'000U, 8U, 3U);
@@ -272,10 +249,7 @@ int main() {
                       {"code:build"}, 1'700U, 3'000U, 1U, 2U), signer);
     CHECK(revocation_leaf.ok());
     CHECK(ledger.revoke_receipt(revocation_mid.child->receipt_id, now).ok());
-    auto cascaded = gate.authorize(
-        revocation_leaf.child, guff::AuthorityPurpose::CapabilityGrant,
-        revocation_leaf.child->envelope.subject_id,
-        revocation_leaf.child->envelope.scope_sha256);
+    auto cascaded = gate_use(gate, revocation_leaf.child, "code:build");
     CHECK(cascaded.ledger_status == guff::AuthorityLedgerStatus::ReceiptRevoked);
 
     const auto before_restart = ledger.inspect();
