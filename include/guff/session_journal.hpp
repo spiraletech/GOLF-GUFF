@@ -12,13 +12,16 @@ namespace guff {
 enum class JournalRecordKind : std::uint8_t {
     Begin,
     Commit,
-    Abort
+    Abort,
+    RecoveryDismiss,
+    RecoveryRetry
 };
 
 enum class JournalStatus : std::uint8_t {
     Ok,
     DuplicateSession,
     SessionNotOpen,
+    RecoveryNotAuthorized,
     Invalid,
     IntegrityError,
     StorageError
@@ -42,8 +45,19 @@ struct JournalTerminal {
     std::string recorded_at_utc;
 };
 
+struct JournalRecovery {
+    JournalRecordKind kind{JournalRecordKind::RecoveryDismiss};
+    std::string session_id;
+    std::string correlation_id;
+    std::string request_sha256;
+    std::string begin_record_sha256;
+    std::string authorization_sha256;
+    std::string child_correlation_id;
+    std::string recorded_at_utc;
+};
+
 struct JournalRecord {
-    std::uint32_t schema_version{1U};
+    std::uint32_t schema_version{2U};
     std::size_t sequence{0U};
     JournalRecordKind kind{JournalRecordKind::Begin};
     std::string session_id;
@@ -75,11 +89,21 @@ struct InterruptedSession {
     bool requires_human_decision{true};
 };
 
+struct RecoveryLineage {
+    std::string parent_session_id;
+    std::string parent_correlation_id;
+    std::string authorization_sha256;
+    std::string child_correlation_id;
+    std::string child_session_id;
+    bool child_started{false};
+};
+
 struct RecoveryInspection {
     bool healthy{true};
     std::size_t records{0U};
     std::string head_sha256;
     std::vector<InterruptedSession> interrupted;
+    std::vector<RecoveryLineage> recovery_lineage;
     std::vector<std::string> errors;
 };
 
@@ -88,7 +112,12 @@ public:
     explicit SessionJournal(std::filesystem::path path);
 
     [[nodiscard]] JournalWriteResult begin(const JournalBegin& begin);
+    [[nodiscard]] JournalWriteResult begin_recovery_child(
+        const JournalBegin& begin,
+        std::string_view parent_session_id,
+        std::string_view authorization_sha256);
     [[nodiscard]] JournalWriteResult finish(const JournalTerminal& terminal);
+    [[nodiscard]] JournalWriteResult recover(const JournalRecovery& recovery);
     [[nodiscard]] RecoveryInspection inspect() const;
 
     [[nodiscard]] const std::filesystem::path& path() const noexcept;

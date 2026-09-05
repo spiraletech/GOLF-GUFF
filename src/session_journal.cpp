@@ -17,6 +17,8 @@ namespace {
 
 constexpr std::string_view kSessionPrefix = "guff:session:sha256:";
 constexpr std::string_view kDojoPrefix = "guff:dojo:sha256:";
+constexpr std::string_view kRecoveryDismissStatus = "RECOVERY_DISMISSED";
+constexpr std::string_view kRecoveryRetryPrefix = "RECOVERY_RETRY_AS_NEW_SESSION:";
 constexpr std::size_t kMaxLineBytes = 16U * 1024U;
 
 std::string genesis_hash() {
@@ -94,6 +96,13 @@ bool parse_unsigned(std::string_view value, T* out) {
     return true;
 }
 
+std::optional<std::string> recovery_child_from_status(std::string_view status) {
+    if (!status.starts_with(kRecoveryRetryPrefix)) return std::nullopt;
+    auto child = std::string(status.substr(kRecoveryRetryPrefix.size()));
+    if (!valid_correlation(child)) return std::nullopt;
+    return child;
+}
+
 std::vector<std::string> validate_begin(const JournalBegin& begin) {
     std::vector<std::string> errors;
     if (!canonical_id(begin.session_id, kSessionPrefix))
@@ -109,7 +118,7 @@ std::vector<std::string> validate_begin(const JournalBegin& begin) {
 
 std::vector<std::string> validate_terminal(const JournalTerminal& terminal) {
     std::vector<std::string> errors;
-    if (terminal.kind == JournalRecordKind::Begin)
+    if (terminal.kind != JournalRecordKind::Commit && terminal.kind != JournalRecordKind::Abort)
         errors.emplace_back("terminal record kind must be COMMIT or ABORT");
     if (!canonical_id(terminal.session_id, kSessionPrefix))
         errors.emplace_back("session_id must be a canonical GOLF session identity");
@@ -125,6 +134,35 @@ std::vector<std::string> validate_terminal(const JournalTerminal& terminal) {
         errors.emplace_back("terminal_status must be 1-128 bytes");
     if (terminal.recorded_at_utc.empty() || terminal.recorded_at_utc.size() > 128U)
         errors.emplace_back("recorded_at_utc must be 1-128 bytes");
+    return errors;
+}
+
+std::vector<std::string> validate_recovery(const JournalRecovery& recovery) {
+    std::vector<std::string> errors;
+    if (recovery.kind != JournalRecordKind::RecoveryDismiss &&
+        recovery.kind != JournalRecordKind::RecoveryRetry)
+        errors.emplace_back("recovery kind must be RECOVERY_DISMISS or RECOVERY_RETRY");
+    if (!canonical_id(recovery.session_id, kSessionPrefix))
+        errors.emplace_back("recovery session_id must be canonical");
+    if (!valid_correlation(recovery.correlation_id))
+        errors.emplace_back("recovery correlation_id must be a 1-96 byte token");
+    if (!is_sha256(recovery.request_sha256))
+        errors.emplace_back("recovery request_sha256 must be SHA-256");
+    if (!is_sha256(recovery.begin_record_sha256))
+        errors.emplace_back("begin_record_sha256 must be SHA-256");
+    if (!is_sha256(recovery.authorization_sha256))
+        errors.emplace_back("authorization_sha256 must be SHA-256");
+    if (recovery.recorded_at_utc.empty() || recovery.recorded_at_utc.size() > 128U)
+        errors.emplace_back("recorded_at_utc must be 1-128 bytes");
+    if (recovery.kind == JournalRecordKind::RecoveryDismiss) {
+        if (!recovery.child_correlation_id.empty())
+            errors.emplace_back("DISMISS cannot reserve a child correlation id");
+    } else {
+        if (!valid_correlation(recovery.child_correlation_id))
+            errors.emplace_back("RETRY_AS_NEW_SESSION requires a valid child correlation id");
+        if (recovery.child_correlation_id == recovery.correlation_id)
+            errors.emplace_back("recovery child correlation must be fresh");
+    }
     return errors;
 }
 
@@ -181,7 +219,11 @@ std::optional<JournalRecord> deserialize(std::string_view line, std::string* err
         if (error) *error = "invalid numeric journal field";
         return std::nullopt;
     }
-    if (record.schema_version != 1U || kind > static_cast<unsigned>(JournalRecordKind::Abort)) {
+    const bool schema_one = record.schema_version == 1U;
+    const bool schema_two = record.schema_version == 2U;
+    if ((!schema_one && !schema_two) ||
+        (schema_one && kind > static_cast<unsigned>(JournalRecordKind::Abort)) ||
+        (schema_two && kind > static_cast<unsigned>(JournalRecordKind::RecoveryRetry))) {
         if (error) *error = "unsupported journal schema or record kind";
         return std::nullopt;
     }
@@ -216,20 +258,36 @@ std::optional<JournalRecord> deserialize(std::string_view line, std::string* err
         if (error) *error = "journal record failed common validation";
         return std::nullopt;
     }
+
     if (record.kind == JournalRecordKind::Begin) {
         if (!record.audit_sha256.empty() || !record.dojo_episode_id.empty() ||
             !record.terminal_status.empty()) {
             if (error) *error = "BEGIN record contains terminal-only fields";
             return std::nullopt;
         }
-    } else {
+    } else if (record.kind == JournalRecordKind::Commit ||
+               record.kind == JournalRecordKind::Abort) {
         if (!is_sha256(record.audit_sha256) || record.terminal_status.empty() ||
             record.terminal_status.size() > 128U ||
             (!record.dojo_episode_id.empty() && !canonical_id(record.dojo_episode_id, kDojoPrefix))) {
             if (error) *error = "terminal journal record failed validation";
             return std::nullopt;
         }
+    } else if (record.kind == JournalRecordKind::RecoveryDismiss) {
+        if (!is_sha256(record.audit_sha256) || !record.dojo_episode_id.empty() ||
+            record.terminal_status != kRecoveryDismissStatus) {
+            if (error) *error = "recovery DISMISS record failed validation";
+            return std::nullopt;
+        }
+    } else {
+        const auto child = recovery_child_from_status(record.terminal_status);
+        if (!is_sha256(record.audit_sha256) || !record.dojo_episode_id.empty() ||
+            !child || *child == record.correlation_id) {
+            if (error) *error = "recovery RETRY record failed validation";
+            return std::nullopt;
+        }
     }
+
     if (record.record_sha256 != sha256(canonical_record(record))) {
         if (error) *error = "journal record identity mismatch";
         return std::nullopt;
@@ -247,6 +305,8 @@ struct ScanState {
     std::string head_sha256{genesis_hash()};
     std::map<std::string, OpenState> open;
     std::unordered_set<std::string> seen;
+    std::unordered_set<std::string> used_correlations;
+    std::vector<RecoveryLineage> lineages;
     std::vector<std::string> errors;
 };
 
@@ -295,8 +355,18 @@ ScanState scan_journal(const std::filesystem::path& path) {
                 state.errors.emplace_back("duplicate BEGIN for immutable session id");
                 break;
             }
+            state.used_correlations.emplace(record->correlation_id);
             state.open.emplace(record->session_id, OpenState{*record});
-        } else {
+            for (auto& lineage : state.lineages) {
+                if (!lineage.child_started &&
+                    lineage.child_correlation_id == record->correlation_id) {
+                    lineage.child_started = true;
+                    lineage.child_session_id = record->session_id;
+                    break;
+                }
+            }
+        } else if (record->kind == JournalRecordKind::Commit ||
+                   record->kind == JournalRecordKind::Abort) {
             const auto it = state.open.find(record->session_id);
             if (it == state.open.end()) {
                 state.healthy = false;
@@ -308,6 +378,46 @@ ScanState scan_journal(const std::filesystem::path& path) {
                 state.healthy = false;
                 state.errors.emplace_back("terminal record does not match BEGIN contract");
                 break;
+            }
+            state.open.erase(it);
+        } else {
+            const auto it = state.open.find(record->session_id);
+            if (it == state.open.end()) {
+                state.healthy = false;
+                state.errors.emplace_back("recovery record has no matching interrupted BEGIN");
+                break;
+            }
+            if (it->second.begin.correlation_id != record->correlation_id ||
+                it->second.begin.request_sha256 != record->request_sha256) {
+                state.healthy = false;
+                state.errors.emplace_back("recovery record does not match BEGIN contract");
+                break;
+            }
+            if (record->kind == JournalRecordKind::RecoveryRetry) {
+                const auto child = recovery_child_from_status(record->terminal_status);
+                if (!child || state.used_correlations.contains(*child)) {
+                    state.healthy = false;
+                    state.errors.emplace_back("recovery child correlation is invalid or already used");
+                    break;
+                }
+                const auto duplicate = std::find_if(
+                    state.lineages.begin(), state.lineages.end(),
+                    [&](const RecoveryLineage& lineage) {
+                        return lineage.child_correlation_id == *child;
+                    });
+                if (duplicate != state.lineages.end()) {
+                    state.healthy = false;
+                    state.errors.emplace_back("recovery child correlation reserved more than once");
+                    break;
+                }
+                state.lineages.push_back({
+                    .parent_session_id = record->session_id,
+                    .parent_correlation_id = record->correlation_id,
+                    .authorization_sha256 = record->audit_sha256,
+                    .child_correlation_id = *child,
+                    .child_session_id = {},
+                    .child_started = false,
+                });
             }
             state.open.erase(it);
         }
@@ -390,6 +500,69 @@ JournalWriteResult SessionJournal::begin(const JournalBegin& begin_record) {
         result.errors.emplace_back("immutable session id already exists in journal");
         return result;
     }
+    const auto reserved = std::find_if(
+        scan.lineages.begin(), scan.lineages.end(),
+        [&](const RecoveryLineage& lineage) {
+            return !lineage.child_started &&
+                   lineage.child_correlation_id == begin_record.correlation_id;
+        });
+    if (reserved != scan.lineages.end()) {
+        result.status = JournalStatus::RecoveryNotAuthorized;
+        result.errors.emplace_back("reserved recovery child correlation requires begin_recovery_child");
+        return result;
+    }
+
+    JournalRecord record;
+    record.sequence = scan.next_sequence;
+    record.kind = JournalRecordKind::Begin;
+    record.session_id = begin_record.session_id;
+    record.correlation_id = begin_record.correlation_id;
+    record.request_sha256 = begin_record.request_sha256;
+    record.recorded_at_utc = begin_record.recorded_at_utc;
+    record.previous_record_sha256 = scan.head_sha256;
+    return append_record(path_, std::move(record));
+}
+
+JournalWriteResult SessionJournal::begin_recovery_child(
+    const JournalBegin& begin_record,
+    std::string_view parent_session_id,
+    std::string_view authorization_sha256) {
+    JournalWriteResult result;
+    result.errors = validate_begin(begin_record);
+    if (!canonical_id(parent_session_id, kSessionPrefix))
+        result.errors.emplace_back("parent_session_id must be canonical");
+    if (!is_sha256(authorization_sha256))
+        result.errors.emplace_back("authorization_sha256 must be SHA-256");
+    if (!result.errors.empty()) {
+        result.status = JournalStatus::Invalid;
+        return result;
+    }
+
+    const auto scan = scan_journal(path_);
+    if (!scan.healthy) {
+        result.status = JournalStatus::IntegrityError;
+        result.errors = scan.errors;
+        return result;
+    }
+    if (scan.seen.contains(begin_record.session_id)) {
+        result.status = JournalStatus::DuplicateSession;
+        result.errors.emplace_back("immutable session id already exists in journal");
+        return result;
+    }
+
+    const auto lineage = std::find_if(
+        scan.lineages.begin(), scan.lineages.end(),
+        [&](const RecoveryLineage& item) {
+            return !item.child_started &&
+                   item.parent_session_id == parent_session_id &&
+                   item.authorization_sha256 == authorization_sha256 &&
+                   item.child_correlation_id == begin_record.correlation_id;
+        });
+    if (lineage == scan.lineages.end()) {
+        result.status = JournalStatus::RecoveryNotAuthorized;
+        result.errors.emplace_back("no matching fresh recovery authorization for child BEGIN");
+        return result;
+    }
 
     JournalRecord record;
     record.sequence = scan.next_sequence;
@@ -443,6 +616,66 @@ JournalWriteResult SessionJournal::finish(const JournalTerminal& terminal) {
     return append_record(path_, std::move(record));
 }
 
+JournalWriteResult SessionJournal::recover(const JournalRecovery& recovery) {
+    JournalWriteResult result;
+    result.errors = validate_recovery(recovery);
+    if (!result.errors.empty()) {
+        result.status = JournalStatus::Invalid;
+        return result;
+    }
+
+    const auto scan = scan_journal(path_);
+    if (!scan.healthy) {
+        result.status = JournalStatus::IntegrityError;
+        result.errors = scan.errors;
+        return result;
+    }
+    const auto open = scan.open.find(recovery.session_id);
+    if (open == scan.open.end()) {
+        result.status = JournalStatus::SessionNotOpen;
+        result.errors.emplace_back("recovery parent is not interrupted/open");
+        return result;
+    }
+    if (open->second.begin.correlation_id != recovery.correlation_id ||
+        open->second.begin.request_sha256 != recovery.request_sha256 ||
+        open->second.begin.record_sha256 != recovery.begin_record_sha256) {
+        result.status = JournalStatus::Invalid;
+        result.errors.emplace_back("recovery authorization does not match interrupted BEGIN identity");
+        return result;
+    }
+    if (recovery.kind == JournalRecordKind::RecoveryRetry) {
+        if (scan.used_correlations.contains(recovery.child_correlation_id)) {
+            result.status = JournalStatus::Invalid;
+            result.errors.emplace_back("recovery child correlation has already been used");
+            return result;
+        }
+        const auto reserved = std::find_if(
+            scan.lineages.begin(), scan.lineages.end(),
+            [&](const RecoveryLineage& lineage) {
+                return lineage.child_correlation_id == recovery.child_correlation_id;
+            });
+        if (reserved != scan.lineages.end()) {
+            result.status = JournalStatus::Invalid;
+            result.errors.emplace_back("recovery child correlation is already reserved");
+            return result;
+        }
+    }
+
+    JournalRecord record;
+    record.sequence = scan.next_sequence;
+    record.kind = recovery.kind;
+    record.session_id = recovery.session_id;
+    record.correlation_id = recovery.correlation_id;
+    record.request_sha256 = recovery.request_sha256;
+    record.audit_sha256 = recovery.authorization_sha256;
+    record.terminal_status = recovery.kind == JournalRecordKind::RecoveryDismiss
+        ? std::string(kRecoveryDismissStatus)
+        : std::string(kRecoveryRetryPrefix) + recovery.child_correlation_id;
+    record.recorded_at_utc = recovery.recorded_at_utc;
+    record.previous_record_sha256 = scan.head_sha256;
+    return append_record(path_, std::move(record));
+}
+
 RecoveryInspection SessionJournal::inspect() const {
     const auto scan = scan_journal(path_);
     RecoveryInspection result;
@@ -450,6 +683,7 @@ RecoveryInspection SessionJournal::inspect() const {
     result.records = scan.next_sequence;
     result.head_sha256 = scan.head_sha256;
     result.errors = scan.errors;
+    result.recovery_lineage = scan.lineages;
     for (const auto& [session_id, state] : scan.open) {
         result.interrupted.push_back({
             .session_id = session_id,
@@ -473,6 +707,8 @@ std::string_view to_string(JournalRecordKind kind) noexcept {
     case JournalRecordKind::Begin: return "BEGIN";
     case JournalRecordKind::Commit: return "COMMIT";
     case JournalRecordKind::Abort: return "ABORT";
+    case JournalRecordKind::RecoveryDismiss: return "RECOVERY_DISMISS";
+    case JournalRecordKind::RecoveryRetry: return "RECOVERY_RETRY_AS_NEW_SESSION";
     }
     return "BEGIN";
 }
@@ -482,6 +718,7 @@ std::string_view to_string(JournalStatus status) noexcept {
     case JournalStatus::Ok: return "OK";
     case JournalStatus::DuplicateSession: return "DUPLICATE_SESSION";
     case JournalStatus::SessionNotOpen: return "SESSION_NOT_OPEN";
+    case JournalStatus::RecoveryNotAuthorized: return "RECOVERY_NOT_AUTHORIZED";
     case JournalStatus::Invalid: return "INVALID";
     case JournalStatus::IntegrityError: return "INTEGRITY_ERROR";
     case JournalStatus::StorageError: return "STORAGE_ERROR";

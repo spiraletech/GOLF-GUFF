@@ -80,6 +80,8 @@ struct ExecutionSessionRequest {
     std::string summary;
     std::string recorded_at_utc;
     std::vector<std::string> dojo_tags;
+    std::string parent_session_id;
+    std::string recovery_authorization_sha256;
 };
 
 struct ExecutionSessionResult {
@@ -136,6 +138,12 @@ private:
     SessionJournal* journal_{nullptr};
 };
 
+[[nodiscard]] std::string execution_session_id(
+    const ExecutionSessionRequest& request,
+    const HardwareProfile& hardware);
+[[nodiscard]] std::string execution_request_sha256(
+    const ExecutionSessionRequest& request,
+    const HardwareProfile& hardware);
 [[nodiscard]] std::string_view to_string(SessionStatus status) noexcept;
 [[nodiscard]] std::string_view to_string(SessionStage stage) noexcept;
 
