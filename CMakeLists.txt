@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.13.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.15.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,6 +22,7 @@ add_library(guff_core STATIC
     src/native_process.cpp
     src/execution_session.cpp
     src/session_journal.cpp
+    src/recovery_protocol.cpp
     src/sha256.cpp
     src/model_manifest.cpp
     src/model_registry.cpp
@@ -104,4 +105,8 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_session_journal tests/session_journal.cpp)
     target_link_libraries(guff_session_journal PRIVATE guff_core)
     add_test(NAME guff.session_journal COMMAND guff_session_journal)
+
+    add_executable(guff_recovery_protocol tests/recovery_protocol.cpp)
+    target_link_libraries(guff_recovery_protocol PRIVATE guff_core)
+    add_test(NAME guff.recovery_protocol COMMAND guff_recovery_protocol)
 endif()
