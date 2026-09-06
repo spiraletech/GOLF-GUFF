@@ -136,6 +136,9 @@ public:
     [[nodiscard]] bool is_policy_active(std::string_view policy_id) const;
     [[nodiscard]] std::string active_policy_id() const;
     [[nodiscard]] std::string active_package_id() const;
+    [[nodiscard]] std::optional<SignedPolicyPackage> package(
+        std::string_view policy_id) const;
+    [[nodiscard]] std::optional<SignedPolicyPackage> active_package() const;
     [[nodiscard]] const std::filesystem::path& path() const noexcept;
 
 private:
