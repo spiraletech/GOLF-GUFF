@@ -4,14 +4,18 @@
 #include <array>
 #include <chrono>
 #include <cctype>
+#include <fstream>
 #include <limits>
+#include <optional>
 #include <set>
+#include <string>
 #include <thread>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <psapi.h>
 #else
 #include <cerrno>
 #include <csignal>
@@ -23,6 +27,8 @@
 
 namespace guff {
 namespace {
+
+using SteadyClock = std::chrono::steady_clock;
 
 std::size_t saturating_add(std::size_t lhs, std::size_t rhs) noexcept {
     if (rhs > std::numeric_limits<std::size_t>::max() - lhs) {
@@ -86,6 +92,26 @@ std::vector<std::string> effective_arguments(const NativeProcessBinding& binding
     return args;
 }
 
+std::uint64_t elapsed_ms(SteadyClock::time_point started) noexcept {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        SteadyClock::now() - started).count();
+    return elapsed < 0 ? 0U : static_cast<std::uint64_t>(elapsed);
+}
+
+void observe_first_output(ForgeExecutorReport& report,
+                          SteadyClock::time_point started) noexcept {
+    if (report.first_output_observed) return;
+    report.first_output_observed = true;
+    report.time_to_first_output_ms = elapsed_ms(started);
+}
+
+void observe_resident_memory(ForgeExecutorReport& report,
+                             const std::optional<std::uint64_t>& bytes) noexcept {
+    if (!bytes) return;
+    report.process_memory_observed = true;
+    report.peak_resident_memory_bytes = std::max(report.peak_resident_memory_bytes, *bytes);
+}
+
 #ifdef _WIN32
 std::optional<std::wstring> utf8_to_wide(std::string_view value) {
     if (value.empty()) return std::wstring{};
@@ -129,7 +155,17 @@ std::wstring quote_windows_argument(std::wstring_view value) {
     return out;
 }
 
-bool drain_windows_pipe(HANDLE read_pipe, ForgeOutputSink& output) {
+std::optional<std::uint64_t> sample_windows_peak_rss(HANDLE process) noexcept {
+    PROCESS_MEMORY_COUNTERS counters{};
+    counters.cb = sizeof(counters);
+    if (!GetProcessMemoryInfo(process, &counters, sizeof(counters))) return std::nullopt;
+    return static_cast<std::uint64_t>(counters.PeakWorkingSetSize);
+}
+
+bool drain_windows_pipe(HANDLE read_pipe,
+                        ForgeOutputSink& output,
+                        ForgeExecutorReport& report,
+                        SteadyClock::time_point started) {
     std::array<char, 4096U> buffer{};
     while (true) {
         DWORD available = 0U;
@@ -138,6 +174,7 @@ bool drain_windows_pipe(HANDLE read_pipe, ForgeOutputSink& output) {
         DWORD read = 0U;
         const auto wanted = static_cast<DWORD>(std::min<std::size_t>(buffer.size(), available));
         if (!ReadFile(read_pipe, buffer.data(), wanted, &read, nullptr) || read == 0U) return true;
+        observe_first_output(report, started);
         if (!output.write(std::string_view(buffer.data(), read))) return false;
     }
 }
@@ -211,11 +248,12 @@ ForgeExecutorReport run_windows(const NativeProcessBinding& binding,
         return report;
     }
 
-    const auto started = std::chrono::steady_clock::now();
+    const auto started = SteadyClock::now();
     bool timeout = false;
     bool output_overflow = false;
     while (true) {
-        if (!drain_windows_pipe(read_pipe, output)) {
+        observe_resident_memory(report, sample_windows_peak_rss(process.hProcess));
+        if (!drain_windows_pipe(read_pipe, output, report, started)) {
             output_overflow = true;
             TerminateProcess(process.hProcess, 125U);
             WaitForSingleObject(process.hProcess, INFINITE);
@@ -230,16 +268,15 @@ ForgeExecutorReport run_windows(const NativeProcessBinding& binding,
             break;
         }
 
-        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - started).count();
-        if (elapsed >= static_cast<long long>(request.budget.max_wall_time_ms)) {
+        if (elapsed_ms(started) >= request.budget.max_wall_time_ms) {
             timeout = true;
             TerminateProcess(process.hProcess, 124U);
             WaitForSingleObject(process.hProcess, INFINITE);
             break;
         }
     }
-    static_cast<void>(drain_windows_pipe(read_pipe, output));
+    observe_resident_memory(report, sample_windows_peak_rss(process.hProcess));
+    static_cast<void>(drain_windows_pipe(read_pipe, output, report, started));
 
     DWORD exit_code = 126U;
     GetExitCodeProcess(process.hProcess, &exit_code);
@@ -247,21 +284,52 @@ ForgeExecutorReport run_windows(const NativeProcessBinding& binding,
     CloseHandle(process.hProcess);
     CloseHandle(read_pipe);
 
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - started).count();
     report.completed = true;
     report.exit_code = static_cast<int>(exit_code);
-    report.reported_wall_time_ms = elapsed < 0 ? 0U : static_cast<std::uint64_t>(elapsed);
+    report.reported_wall_time_ms = elapsed_ms(started);
     if (timeout) report.reported_wall_time_ms = request.budget.max_wall_time_ms + 1U;
     if (output_overflow && report.exit_code == 0) report.exit_code = 125;
     return report;
 }
 #else
-bool drain_posix_pipe(int fd, ForgeOutputSink& output) {
+std::optional<std::uint64_t> sample_posix_resident_bytes(pid_t pid) {
+#if defined(__linux__)
+    std::ifstream status("/proc/" + std::to_string(static_cast<long long>(pid)) + "/status");
+    if (!status) return std::nullopt;
+
+    std::optional<std::uint64_t> rss_bytes;
+    std::string key;
+    while (status >> key) {
+        if (key == "VmHWM:" || key == "VmRSS:") {
+            std::uint64_t kb = 0U;
+            std::string unit;
+            if (!(status >> kb >> unit)) return rss_bytes;
+            const auto bytes = kb <= (std::numeric_limits<std::uint64_t>::max() / 1024U)
+                ? kb * 1024U
+                : std::numeric_limits<std::uint64_t>::max();
+            if (key == "VmHWM:") return bytes;
+            rss_bytes = bytes;
+        } else {
+            std::string rest;
+            std::getline(status, rest);
+        }
+    }
+    return rss_bytes;
+#else
+    static_cast<void>(pid);
+    return std::nullopt;
+#endif
+}
+
+bool drain_posix_pipe(int fd,
+                      ForgeOutputSink& output,
+                      ForgeExecutorReport& report,
+                      SteadyClock::time_point started) {
     std::array<char, 4096U> buffer{};
     while (true) {
         const auto count = ::read(fd, buffer.data(), buffer.size());
         if (count > 0) {
+            observe_first_output(report, started);
             if (!output.write(std::string_view(buffer.data(), static_cast<std::size_t>(count)))) return false;
             continue;
         }
@@ -317,14 +385,15 @@ ForgeExecutorReport run_posix(const NativeProcessBinding& binding,
     const auto flags = ::fcntl(pipe_fds[0], F_GETFL, 0);
     if (flags >= 0) static_cast<void>(::fcntl(pipe_fds[0], F_SETFL, flags | O_NONBLOCK));
 
-    const auto started = std::chrono::steady_clock::now();
+    const auto started = SteadyClock::now();
     bool timeout = false;
     bool output_overflow = false;
     int wait_status = 0;
     bool reaped = false;
 
     while (!reaped) {
-        if (!drain_posix_pipe(pipe_fds[0], output)) {
+        observe_resident_memory(report, sample_posix_resident_bytes(pid));
+        if (!drain_posix_pipe(pipe_fds[0], output, report, started)) {
             output_overflow = true;
             static_cast<void>(::kill(pid, SIGKILL));
         }
@@ -341,9 +410,7 @@ ForgeExecutorReport run_posix(const NativeProcessBinding& binding,
             break;
         }
 
-        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - started).count();
-        if (!output_overflow && elapsed >= static_cast<long long>(request.budget.max_wall_time_ms)) {
+        if (!output_overflow && elapsed_ms(started) >= request.budget.max_wall_time_ms) {
             timeout = true;
             static_cast<void>(::kill(pid, SIGKILL));
         }
@@ -355,18 +422,16 @@ ForgeExecutorReport run_posix(const NativeProcessBinding& binding,
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 
-    static_cast<void>(drain_posix_pipe(pipe_fds[0], output));
+    static_cast<void>(drain_posix_pipe(pipe_fds[0], output, report, started));
     ::close(pipe_fds[0]);
 
     int exit_code = 126;
     if (WIFEXITED(wait_status)) exit_code = WEXITSTATUS(wait_status);
     else if (WIFSIGNALED(wait_status)) exit_code = 128 + WTERMSIG(wait_status);
 
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - started).count();
     report.completed = true;
     report.exit_code = exit_code;
-    report.reported_wall_time_ms = elapsed < 0 ? 0U : static_cast<std::uint64_t>(elapsed);
+    report.reported_wall_time_ms = elapsed_ms(started);
     if (timeout) report.reported_wall_time_ms = request.budget.max_wall_time_ms + 1U;
     return report;
 }
