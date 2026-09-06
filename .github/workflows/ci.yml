@@ -21,3 +21,17 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+
+  hardened-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure ASan + UBSan
+        run: cmake -S . -B build-hardened -DCMAKE_BUILD_TYPE=Debug -DGUFF_BUILD_TESTS=ON -DGUFF_ENABLE_SANITIZERS=ON
+      - name: Build hardened
+        run: cmake --build build-hardened --parallel
+      - name: Test hardened
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build-hardened --output-on-failure
