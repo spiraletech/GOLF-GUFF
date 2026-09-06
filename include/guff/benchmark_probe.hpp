@@ -45,6 +45,7 @@ struct KernelBenchmarkProof {
     std::uint32_t schema_version{1U};
     BenchmarkProofStatus status{BenchmarkProofStatus::InvalidInput};
     std::string run_id;
+    std::string recorded_at_utc;
     std::string task_proof_id;
     std::string model_id;
     std::string hardware_id;
