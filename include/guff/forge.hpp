@@ -55,6 +55,10 @@ struct ForgeExecutorReport {
     bool completed{false};
     int exit_code{-1};
     std::uint64_t reported_wall_time_ms{0U};
+    bool first_output_observed{false};
+    std::uint64_t time_to_first_output_ms{0U};
+    bool process_memory_observed{false};
+    std::uint64_t peak_resident_memory_bytes{0U};
 };
 
 struct ForgeExecutionResult {
@@ -65,6 +69,10 @@ struct ForgeExecutionResult {
     std::string slot_immutable_id;
     int exit_code{-1};
     std::uint64_t wall_time_ms{0U};
+    bool first_output_observed{false};
+    std::uint64_t time_to_first_output_ms{0U};
+    bool process_memory_observed{false};
+    std::uint64_t peak_resident_memory_bytes{0U};
     std::size_t captured_output_bytes{0U};
     std::size_t observed_output_bytes{0U};
     bool output_truncated{false};
