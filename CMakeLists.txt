@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.26.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.27.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,6 +26,7 @@ add_library(guff_core STATIC
     src/clubhouse.cpp
     src/forge.cpp
     src/native_process.cpp
+    src/gguf_inference.cpp
     src/execution_session.cpp
     src/session_journal.cpp
     src/recovery_protocol.cpp
@@ -126,6 +127,10 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_native_process tests/native_process.cpp)
     target_link_libraries(guff_native_process PRIVATE guff_core)
     add_test(NAME guff.native_process COMMAND guff_native_process)
+
+    add_executable(guff_gguf_inference tests/gguf_inference.cpp)
+    target_link_libraries(guff_gguf_inference PRIVATE guff_core)
+    add_test(NAME guff.gguf_inference COMMAND guff_gguf_inference)
 
     add_executable(guff_execution_session tests/execution_session.cpp)
     target_link_libraries(guff_execution_session PRIVATE guff_core)
