@@ -59,6 +59,9 @@ endif()
 add_executable(GOLF-GUFF src/main.cpp)
 target_link_libraries(GOLF-GUFF PRIVATE guff_core)
 
+add_executable(GOLF-GUFF-OPERATOR src/operator_main.cpp)
+target_link_libraries(GOLF-GUFF-OPERATOR PRIVATE guff_core)
+
 if(GUFF_BUILD_TESTS)
     enable_testing()
 
