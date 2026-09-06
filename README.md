@@ -76,7 +76,7 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 - append-only `BEGIN`, `COMMIT` and `ABORT` transaction records.
 - `BEGIN` must commit before journaled execution can reach side effects.
-- global sequence + SHA-256 chaining detects corruption and blocks future transaction appends.
+- global sequence + SHA-256 chaining detects corruption and blocks further transaction appends.
 - interrupted sessions expose inspection metadata only; recovery never auto-replays them.
 
 ## L14 — Recovery Decision Protocol
@@ -172,28 +172,37 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 - matching-rule conflict precedence is `REFUSE > HUMAN_REVIEW > ALLOW`; numeric priority only resolves rules with the same effect.
 - evaluation traces and matched rule IDs are bounded, and evaluation has no execution/authority-consumption side effects.
 
+## L24 — Signed Policy Registry / Activation Protocol
+
+- canonical L23 policy bodies are signed into content-addressed `guff:policy-package:sha256:<digest>` packages.
+- policy-author signer trust and policy-control signer trust are separate verifier domains.
+- signed controls are content-addressed as `guff:policy-control:sha256:<digest>` and permit only `ACTIVATE`, `ROLLBACK`, or `REVOKE`.
+- every control signs the exact policy/package ID, expected current active policy, actor, timestamp, nonce and reason SHA-256.
+- activation uses compare-and-swap semantics; stale processes cannot replace a policy using obsolete active-state knowledge.
+- immutable control IDs plus `(control signer, nonce)` binding reject replay/collision.
+- `ROLLBACK` targets only a policy that was previously active; it is not an alias for arbitrary activation.
+- revoking the active policy clears active state and fails closed instead of choosing an automatic fallback.
+- policy registry records are append-only and globally SHA-256 chained.
+- policy bodies remain external while signed identity, activation history, revocation and active version persist cold.
+- `RegistryBackedPolicyEngine` rechecks the registry on every evaluation, so stale cached policy documents lose authority immediately after activation change, rollback, revocation or registry corruption.
+
 ```text
-MASTER AUTHORITY
-      |
-      v
-L18 BACKING VOUCHER
-      |
-      v
-L19 EPHEMERAL SESSION KEY
-      |
-      v
-L20 RUNTIME LEASE -----------+
-                              |
-L21 TRUSTED OS ATTESTATION ---+--> L23 POLICY ENGINE
-      |                       |      |
-      v                       |      +--> ALLOW
-L22 IDENTITY CONTINUITY ------+      +--> REFUSE
- device / image / process            +--> HUMAN_REVIEW
- observation / revocation
-                              ^
-                              |
-                  CLUBHOUSE capability
-                  STRATA + derived risk
+SIGNED POLICY PACKAGE
+        |
+        v
+L24 POLICY REGISTRY <----- signed ACTIVATE / ROLLBACK / REVOKE
+        |
+        | active policy identity
+        v
+L23 POLICY ENGINE
+   ^             ^
+   |             |
+L22 IDENTITY   L15-L21 AUTHORITY
+   |             |
+   +------ CLUBHOUSE / STRATA / RISK
+        |
+        v
+ ALLOW / REFUSE / HUMAN_REVIEW
 ```
 
 ## Design laws
@@ -288,6 +297,16 @@ L22 IDENTITY CONTINUITY ------+      +--> REFUSE
 88. **Policy evaluation has no side effects.** Decisions consume no authority and execute no tools.
 89. **Policy identity is content-addressed.** Reordering equivalent rules does not change the policy ID.
 90. **Policy explanations are bounded.** Matched rules, trace entries and reason bytes have hard ceilings.
+91. **Policy authorship is not policy activation.** Author and control trust domains are separate.
+92. **A running evaluator cannot silently replace its rulebook.** Active policy changes require signed control state.
+93. **Activation is compare-and-swap.** A stale expected-active value cannot overwrite current policy state.
+94. **Control replay is bounded by identity and nonce.** A consumed control or signer/nonce collision is refused.
+95. **Rollback returns only to prior active history.** It cannot mint an untested activation path.
+96. **Revocation fails closed.** Revoking the active policy produces no active policy unless a separate signed activation follows.
+97. **Policy bodies remain external.** The registry persists signed content identity and activation history rather than arbitrary source bodies.
+98. **Every evaluation rechecks activation.** Cached policy objects lose authority when registry state changes.
+99. **Registry corruption means no policy authority.** Broken history is never treated as permission.
+100. **L24 chooses the rulebook; L23 interprets it.** Neither layer executes tools or mints execution authority.
 
 ## Build
 
@@ -299,4 +318,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L24 should add a durable signed policy registry / activation protocol so policy documents can be versioned, approved, activated, rolled back and revoked without allowing a process to silently replace the active policy in memory.
+L25 should add the operator control surface / policy inspection boundary: a compact, read-first console for active policy, signer provenance, pending human-review decisions, authority/identity state, transaction recovery and signed policy-control issuance without bypassing L23/L24 semantics.
