@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.28.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.29.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,6 +29,7 @@ add_library(guff_core STATIC
     src/artifact_vault.cpp
     src/gguf_inference.cpp
     src/kernel_task.cpp
+    src/benchmark_probe.cpp
     src/execution_session.cpp
     src/session_journal.cpp
     src/recovery_protocol.cpp
@@ -63,7 +64,7 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(guff_core PRIVATE advapi32)
+    target_link_libraries(guff_core PRIVATE advapi32 psapi)
 endif()
 
 add_executable(GOLF-GUFF src/main.cpp)
@@ -130,6 +131,10 @@ if(GUFF_BUILD_TESTS)
     target_link_libraries(guff_native_process PRIVATE guff_core)
     add_test(NAME guff.native_process COMMAND guff_native_process)
 
+    add_executable(guff_native_telemetry tests/native_telemetry.cpp)
+    target_link_libraries(guff_native_telemetry PRIVATE guff_core)
+    add_test(NAME guff.native_telemetry COMMAND guff_native_telemetry)
+
     add_executable(guff_artifact_vault tests/artifact_vault.cpp)
     target_link_libraries(guff_artifact_vault PRIVATE guff_core)
     add_test(NAME guff.artifact_vault COMMAND guff_artifact_vault)
@@ -145,6 +150,10 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_kernel_task tests/kernel_task.cpp)
     target_link_libraries(guff_kernel_task PRIVATE guff_core)
     add_test(NAME guff.kernel_task COMMAND guff_kernel_task)
+
+    add_executable(guff_benchmark_probe tests/benchmark_probe.cpp)
+    target_link_libraries(guff_benchmark_probe PRIVATE guff_core)
+    add_test(NAME guff.benchmark_probe COMMAND guff_benchmark_probe)
 
     add_executable(guff_execution_session tests/execution_session.cpp)
     target_link_libraries(guff_execution_session PRIVATE guff_core)
