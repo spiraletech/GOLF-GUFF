@@ -80,6 +80,9 @@ target_link_libraries(GOLF-GUFF-OPERATOR PRIVATE guff_core)
 add_executable(GOLF-GUFF-RELEASE-CHECK src/release_main.cpp)
 target_link_libraries(GOLF-GUFF-RELEASE-CHECK PRIVATE guff_core)
 
+add_executable(GOLF-GUFF-ALPHA-CHECK src/alpha_main.cpp)
+target_link_libraries(GOLF-GUFF-ALPHA-CHECK PRIVATE guff_core)
+
 if(GUFF_BUILD_TESTS)
     enable_testing()
 
@@ -166,6 +169,11 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_alpha_release tests/alpha_release.cpp)
     target_link_libraries(guff_alpha_release PRIVATE guff_core)
     add_test(NAME guff.alpha_release COMMAND guff_alpha_release)
+    add_test(NAME guff.alpha_cli_ready
+             COMMAND GOLF-GUFF-ALPHA-CHECK "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/alpha-ready.txt")
+    add_test(NAME guff.alpha_cli_fail_closed
+             COMMAND GOLF-GUFF-ALPHA-CHECK "${CMAKE_CURRENT_BINARY_DIR}/missing-alpha-evidence.txt")
+    set_tests_properties(guff.alpha_cli_fail_closed PROPERTIES WILL_FAIL TRUE)
 
     add_executable(guff_execution_session tests/execution_session.cpp)
     target_link_libraries(guff_execution_session PRIVATE guff_core)
@@ -243,6 +251,7 @@ install(TARGETS
     GOLF-GUFF
     GOLF-GUFF-OPERATOR
     GOLF-GUFF-RELEASE-CHECK
+    GOLF-GUFF-ALPHA-CHECK
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
