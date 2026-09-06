@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.22.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.23.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,6 +30,7 @@ add_library(guff_core STATIC
     src/runtime_lease.cpp
     src/runtime_attestation.cpp
     src/runtime_identity_store.cpp
+    src/policy_engine.cpp
     src/authority_gate.cpp
     src/sha256.cpp
     src/model_manifest.cpp
@@ -153,4 +154,8 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_runtime_identity_store tests/runtime_identity_store.cpp)
     target_link_libraries(guff_runtime_identity_store PRIVATE guff_core)
     add_test(NAME guff.runtime_identity_store COMMAND guff_runtime_identity_store)
+
+    add_executable(guff_policy_engine tests/policy_engine.cpp)
+    target_link_libraries(guff_policy_engine PRIVATE guff_core)
+    add_test(NAME guff.policy_engine COMMAND guff_policy_engine)
 endif()
