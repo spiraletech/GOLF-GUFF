@@ -135,7 +135,29 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 - wrong device, executable, process instance, slot, session or layer is refused without consuming upstream authority.
 - `RuntimeLeaseLedger` durably records lease registration, use and revocation in its own SHA-256 chain.
 - process identity uses device + executable + process ID + process start time + runtime nonce; PID alone is never treated as identity.
-- runtime coordinates must come from a trusted local observer; L20 defines binding/enforcement, not remote attestation by itself.
+
+## L21 — Trusted Runtime Attestation Provider
+
+- `RuntimeAttestationProvider` separates trusted measurement from caller-supplied request context.
+- native Windows/Linux providers measure a hashed local machine identity, actual executable SHA-256, OS process ID and process creation/start time.
+- attestation evidence is challenge-bound, short-lived and content-addressed as `guff:attestation:sha256:<digest>`.
+- requested CLUBHOUSE slot, immutable session and STRATA layer are bound into the evidence, while device/executable/process identity comes from the provider.
+- raw machine identifiers remain inside the provider and are never returned.
+- `AttestedRuntimeLeaseAuthorityGate` validates provider identity, evidence digest, challenge, context, trust and freshness before forwarding the measured L20 binding.
+- this is OS-derived local attestation, not TPM/TEE remote attestation.
+
+## L22 — Runtime Identity Store
+
+- `RuntimeIdentityStore` turns valid L21 observations into bounded cold identity continuity without turning identity into permission.
+- provider-bound devices use `guff:identity-device:sha256:<digest>`.
+- executable images use provider-independent content identity `guff:identity-image:sha256:<digest>`.
+- provider-bound process instances use `guff:identity-process:sha256:<digest>` and preserve device/image/PID/start lineage for collision detection.
+- attestation observations link identity records to slot/session/STRATA context while retaining only `SHA256(challenge)`, never the raw challenge.
+- device, image and process revocation are independently durable.
+- capacity limits bound device/image/process/attestation state; overflow refuses new evidence instead of silently evicting history or growing without bound.
+- `IdentityTrackingRuntimeAttestationProvider` persists and validates identity continuity before L21 evidence can reach the privileged L20/L19/L18 path.
+- journal sequence/hash corruption, impossible lineage, revoked identities, collisions or storage failure fail closed.
+- L22 records identity facts only; it does not grant capabilities. L23 owns policy.
 
 ```text
 MASTER AUTHORITY
@@ -146,19 +168,22 @@ L18 BACKING VOUCHER
       v
 L19 EPHEMERAL SESSION KEY
       |
-      | signs exact runtime coordinate
       v
-L20 CAPABILITY LEASE
+L20 RUNTIME LEASE
+      ^
       |
-      | device + image + process + slot + session + STRATA
+L21 TRUSTED OS ATTESTATION
+      |
       v
-RUNTIME PREFLIGHT
+L22 IDENTITY CONTINUITY
+ device / image / process
+ observation / revocation
+      |
+      v
+L21/L20 PREFLIGHT
       |
       v
 L19/L18 AUTHORITY CONSUMPTION
-      |
-      v
-L20 DURABLE LEASE USE
       |
       v
  ALLOW / REFUSE
@@ -233,6 +258,19 @@ L20 DURABLE LEASE USE
 65. **Lease use is durable before side effects.** Both backing authority and runtime lease use must be recorded.
 66. **Runtime observation is evidence.** Untrusted request fields cannot self-assert device/process identity.
 67. **Lease revocation is independent.** A runtime lease can be killed without revoking the broader session key.
+68. **The requester cannot self-attest.** Device, executable and process measurements come from the trusted provider.
+69. **Attestation is fresh evidence, not durable authority.** Challenge/context/freshness are checked before the lease gate.
+70. **Raw machine identifiers stay inside the attestor.** The Ring receives a hashed device identity.
+71. **OS-local attestation is not remote attestation.** Kernel/firmware/host compromise remains outside the L21 guarantee.
+72. **Identity is evidence, not permission.** Repeated observation never creates capability authority.
+73. **Identity continuity is bounded.** Cold identity state has explicit device/image/process/observation ceilings.
+74. **Identity revocation survives restart.** A known identity can become unusable without deleting its history.
+75. **Challenges are transient.** Identity persistence stores only the challenge digest, not the raw challenge.
+76. **Provider semantics are part of device/process identity.** Different attestors are not silently conflated.
+77. **Executable identity is content-based.** Image bytes define the executable identity independently of filename/provider.
+78. **Identity corruption fails closed.** Broken sequence, hashes, lineage or impossible replay never becomes trusted evidence.
+79. **Identity persistence precedes privileged use.** Tracking failure blocks evidence before downstream authority is consumed.
+80. **Policy remains separate from identity.** L22 records facts; it does not decide what those facts authorize.
 
 ## Build
 
@@ -244,4 +282,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L21 should add a trusted runtime attestation provider interface that measures the local device, executable image and process instance instead of accepting those coordinates from application code, while preserving L20's exact lease contract.
+L23 should add a declarative policy engine that consumes trusted identity facts, authority purpose/scope/capability, STRATA context and operation risk to produce explicit allow/refuse/human-review decisions without embedding policy into attestors, ledgers or executors.
