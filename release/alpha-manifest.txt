@@ -1,0 +1,16 @@
+GOLF-GUFF-ALPHA-MANIFEST-V1
+version=0.31.0-alpha.1
+release_line=L31
+product_class=experimental governed local-AI control plane
+model_weights_included=false
+hosted_inference_required=false
+default_artifact_mode=cache-only
+reference_runner=llama.cpp-compatible local process
+
+required_alpha_evidence=l27-real-gguf-bridge
+required_alpha_evidence=l28-offline-kernel-task
+required_alpha_evidence=l29-benchmark-memory-proof
+required_alpha_evidence=l30-failure-replay-proof
+required_alpha_evidence=release-package-build
+
+scope_note=The alpha packages GUFF runtime/control-plane code and tools. It does not bundle third-party model weights or claim production-grade model determinism.
