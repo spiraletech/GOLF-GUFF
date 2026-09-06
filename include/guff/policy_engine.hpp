@@ -41,7 +41,8 @@ enum class PolicyEvaluationStatus : std::uint8_t {
     InvalidRequest,
     IdentityRejected,
     AuthorityRejected,
-    BudgetExceeded
+    BudgetExceeded,
+    PolicyInactive
 };
 
 struct PolicyOperation {
