@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.20.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.21.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,6 +28,7 @@ add_library(guff_core STATIC
     src/authority_delegation.cpp
     src/session_key.cpp
     src/runtime_lease.cpp
+    src/runtime_attestation.cpp
     src/authority_gate.cpp
     src/sha256.cpp
     src/model_manifest.cpp
@@ -44,6 +45,10 @@ if(MSVC)
     target_compile_options(guff_core PRIVATE /W4 /permissive-)
 else()
     target_compile_options(guff_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(WIN32)
+    target_link_libraries(guff_core PRIVATE advapi32)
 endif()
 
 add_executable(GOLF-GUFF src/main.cpp)
@@ -139,4 +144,8 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_runtime_lease tests/runtime_lease.cpp)
     target_link_libraries(guff_runtime_lease PRIVATE guff_core)
     add_test(NAME guff.runtime_lease COMMAND guff_runtime_lease)
+
+    add_executable(guff_runtime_attestation tests/runtime_attestation.cpp)
+    target_link_libraries(guff_runtime_attestation PRIVATE guff_core)
+    add_test(NAME guff.runtime_attestation COMMAND guff_runtime_attestation)
 endif()
