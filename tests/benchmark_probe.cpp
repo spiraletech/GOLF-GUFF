@@ -102,6 +102,7 @@ int main() {
     const auto proof = probe.capture(request, result, profile, capture);
     assert(proof.ready());
     assert(proof.status == guff::BenchmarkProofStatus::Ready);
+    assert(proof.recorded_at_utc == capture.recorded_at_utc);
     assert(proof.first_output_measured);
     assert(near(proof.time_to_first_output_ms, 30.0));
     assert(proof.process_memory_measured);
@@ -152,6 +153,22 @@ int main() {
     const auto refused_memory = probe.capture(
         request, missing_memory_result, profile, missing_memory_capture);
     assert(refused_memory.status == guff::BenchmarkProofStatus::MissingProcessTelemetry);
+
+    auto other_hardware = profile;
+    other_hardware.cpu_name = "different-machine";
+    auto mismatch_capture = capture;
+    mismatch_capture.run_id = "l29-course-004";
+    const auto hardware_mismatch = probe.capture(
+        request, result, other_hardware, mismatch_capture);
+    assert(hardware_mismatch.status == guff::BenchmarkProofStatus::InvalidInput);
+
+    auto incomplete_result = result;
+    incomplete_result.status = guff::KernelTaskStatus::ExecutionFailed;
+    auto incomplete_capture = capture;
+    incomplete_capture.run_id = "l29-course-005";
+    const auto incomplete = probe.capture(
+        request, incomplete_result, profile, incomplete_capture);
+    assert(incomplete.status == guff::BenchmarkProofStatus::TaskIncomplete);
 
     return 0;
 }
