@@ -25,6 +25,12 @@ void append_execution_evidence(ForgeExecutionResult& result,
                          " exit=" + std::to_string(result.exit_code) +
                          " wall_ms=" + std::to_string(result.wall_time_ms) +
                          " output_bytes=" + std::to_string(result.observed_output_bytes);
+    if (result.first_output_observed) {
+        detail += " first_output_ms=" + std::to_string(result.time_to_first_output_ms);
+    }
+    if (result.process_memory_observed) {
+        detail += " peak_rss_bytes=" + std::to_string(result.peak_resident_memory_bytes);
+    }
     if (!result.captured_output_sha256.empty()) {
         detail += " captured_sha256=" + result.captured_output_sha256;
     }
@@ -116,6 +122,10 @@ ForgeExecutionResult ForgeAdapter::execute(const ForgeExecutionRequest& request,
 
     result.exit_code = report.exit_code;
     result.wall_time_ms = std::max(measured_ms, report.reported_wall_time_ms);
+    result.first_output_observed = report.first_output_observed;
+    result.time_to_first_output_ms = report.time_to_first_output_ms;
+    result.process_memory_observed = report.process_memory_observed;
+    result.peak_resident_memory_bytes = report.peak_resident_memory_bytes;
     result.captured_output_bytes = output.captured_bytes();
     result.observed_output_bytes = output.observed_bytes();
     result.output_truncated = output.truncated();
