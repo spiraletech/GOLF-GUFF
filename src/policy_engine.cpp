@@ -429,6 +429,7 @@ std::string_view to_string(PolicyEvaluationStatus status) noexcept {
     case PolicyEvaluationStatus::IdentityRejected: return "IDENTITY_REJECTED";
     case PolicyEvaluationStatus::AuthorityRejected: return "AUTHORITY_REJECTED";
     case PolicyEvaluationStatus::BudgetExceeded: return "BUDGET_EXCEEDED";
+    case PolicyEvaluationStatus::PolicyInactive: return "POLICY_INACTIVE";
     }
     return "INVALID_REQUEST";
 }
