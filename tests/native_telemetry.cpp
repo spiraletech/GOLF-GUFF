@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
         for (std::size_t i = 0U; i < resident.size(); i += 4096U) resident[i] = 0xA5U;
         if (resident.front() != 0xA5U) return 9;
         std::this_thread::sleep_for(std::chrono::milliseconds(35));
-        std::cout << "L29_TELEMETRY_OK\n" << std::flush;
+        std::cout << "L29_TELEMETRY_OK" << std::flush;
         std::this_thread::sleep_for(std::chrono::milliseconds(15));
         return 0;
     }
@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
     assert(result.first_output_observed);
     assert(result.time_to_first_output_ms >= 20U);
     assert(result.time_to_first_output_ms <= result.wall_time_ms);
-    assert(result.captured_output_sha256 == guff::sha256("L29_TELEMETRY_OK\n"));
+    assert(result.captured_output_sha256 == guff::sha256("L29_TELEMETRY_OK"));
 
 #if defined(_WIN32) || defined(__linux__)
     assert(result.process_memory_observed);
