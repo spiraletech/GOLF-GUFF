@@ -6,6 +6,7 @@
 #include "guff/hardware_profile.hpp"
 #include "guff/model_registry.hpp"
 #include "guff/native_process.hpp"
+#include "guff/policy_engine.hpp"
 #include "guff/reality.hpp"
 #include "guff/runtime_attestation.hpp"
 #include "guff/runtime_identity_store.hpp"
@@ -25,7 +26,7 @@ int main() {
     guff::RealityStack reality;
     reality.observe({guff::RealityLayer::Project, "spiraletech/GOLF-GUFF", "ring", 1.0});
     reality.observe({guff::RealityLayer::Runtime, "native-cpp20", "guff-core", 1.0});
-    reality.observe({guff::RealityLayer::Semantic, "runtime-identity-store", "L22", 1.0});
+    reality.observe({guff::RealityLayer::Semantic, "declarative-policy-engine", "L23", 1.0});
 
     const auto hardware = guff::detect_hardware_profile();
     guff::ModelRegistry registry;
@@ -35,6 +36,18 @@ int main() {
     const auto recovery = transaction_journal.inspect();
     guff::RuntimeIdentityStore identity_store(std::filesystem::path("guff-runtime-identities.journal"));
     const auto identity_state = identity_store.inspect();
+
+    guff::PolicyDocument bootstrap_policy;
+    bootstrap_policy.policy_name = "ring-l23-bootstrap";
+    guff::PolicyRule bootstrap_review;
+    bootstrap_review.rule_name = "review-unconfigured-high-risk-project-work";
+    bootstrap_review.effect = guff::PolicyDecision::HumanReview;
+    bootstrap_review.subject_prefix = "project:";
+    bootstrap_review.min_risk = guff::PolicyRisk::High;
+    bootstrap_review.max_risk = guff::PolicyRisk::Critical;
+    bootstrap_policy.rules = {bootstrap_review};
+    guff::DeclarativePolicyEngine policy_engine(bootstrap_policy, identity_store);
+
     guff::CaddyRouter router(registry, scorecard);
 
     guff::SourceGrant tool_grant;
@@ -61,7 +74,7 @@ int main() {
     const auto delta = leech.observe_text(
         tool_grant,
         "tool://guff/bootstrap",
-        "L22 runtime identity store online");
+        "L23 declarative policy engine online");
 
     if (delta.current) {
         static_cast<void>(symbiosis.stamp_observation(
@@ -72,7 +85,7 @@ int main() {
     if (auto slice = leech.slice_text(
             tool_grant,
             "tool://guff/bootstrap",
-            "L22 runtime identity store online",
+            "L23 declarative policy engine online",
             0U,
             1024U)) {
         static_cast<void>(context.add(std::move(*slice)));
@@ -157,7 +170,7 @@ int main() {
 
     guff::NativeRuntimeAttestationProvider native_attestor;
 
-    std::cout << "GOLF GUFF / RING L22\n";
+    std::cout << "GOLF GUFF / RING L23\n";
     std::cout << "REALITY: " << reality.describe() << '\n';
     std::cout << "HARDWARE-ID: " << hardware.immutable_id() << '\n';
     std::cout << "SCORECARD-STORE: " << store.path().string() << " (lazy hydration)\n";
@@ -200,8 +213,11 @@ int main() {
               << " devices=" << identity_state.devices
               << " images=" << identity_state.executables
               << " processes=" << identity_state.processes
-              << " attestations=" << identity_state.attestations
-              << " policy=none\n";
+              << " attestations=" << identity_state.attestations << '\n';
+    std::cout << "POLICY-ENGINE: id=" << policy_engine.policy().immutable_id()
+              << " rules=" << policy_engine.policy().rules.size()
+              << " default=" << guff::to_string(policy_engine.policy().default_decision)
+              << " precedence=REFUSE>HUMAN_REVIEW>ALLOW side-effects=none\n";
     std::cout << "CADDY-ROUTER: " << guff::to_string(decision.status)
               << " depth=" << decision.recursion_depth
               << " verify=" << (decision.require_verification ? "yes" : "no") << '\n';

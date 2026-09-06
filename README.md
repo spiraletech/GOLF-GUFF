@@ -76,7 +76,7 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 
 - append-only `BEGIN`, `COMMIT` and `ABORT` transaction records.
 - `BEGIN` must commit before journaled execution can reach side effects.
-- global sequence + SHA-256 chaining detects corruption and blocks future appends.
+- global sequence + SHA-256 chaining detects corruption and blocks future transaction appends.
 - interrupted sessions expose inspection metadata only; recovery never auto-replays them.
 
 ## L14 — Recovery Decision Protocol
@@ -157,7 +157,20 @@ GOLF GUFF is not a single GGUF. It is the routing, benchmarking, reality-model, 
 - capacity limits bound device/image/process/attestation state; overflow refuses new evidence instead of silently evicting history or growing without bound.
 - `IdentityTrackingRuntimeAttestationProvider` persists and validates identity continuity before L21 evidence can reach the privileged L20/L19/L18 path.
 - journal sequence/hash corruption, impossible lineage, revoked identities, collisions or storage failure fail closed.
-- L22 records identity facts only; it does not grant capabilities. L23 owns policy.
+- L22 records identity facts only; it does not grant capabilities.
+
+## L23 — Declarative Policy Engine
+
+- `PolicyDocument` is content-addressed as `guff:policy:sha256:<digest>` and rule order is non-semantic.
+- individual rules are content-addressed as `guff:policy-rule:sha256:<digest>`.
+- policy combines subject, CLUBHOUSE slot/capability, STRATA layer, L22 active identity state, validated L15-L21 authority facts, and deterministic operation risk.
+- decisions are exactly `ALLOW`, `REFUSE`, or `HUMAN_REVIEW`.
+- every valid policy is default-deny; default-allow documents are invalid.
+- empty unconstrained `ALLOW` rules are invalid so an accidental allow-all declaration cannot validate.
+- required identity, authority scope, capability, and runtime-binding failures are refused before permissive rules are considered.
+- risk is derived from capability + uncertainty + persistence + external side effects + destructive intent; callers do not submit a self-selected risk label.
+- matching-rule conflict precedence is `REFUSE > HUMAN_REVIEW > ALLOW`; numeric priority only resolves rules with the same effect.
+- evaluation traces and matched rule IDs are bounded, and evaluation has no execution/authority-consumption side effects.
 
 ```text
 MASTER AUTHORITY
@@ -169,24 +182,18 @@ L18 BACKING VOUCHER
 L19 EPHEMERAL SESSION KEY
       |
       v
-L20 RUNTIME LEASE
-      ^
-      |
-L21 TRUSTED OS ATTESTATION
-      |
-      v
-L22 IDENTITY CONTINUITY
- device / image / process
+L20 RUNTIME LEASE -----------+
+                              |
+L21 TRUSTED OS ATTESTATION ---+--> L23 POLICY ENGINE
+      |                       |      |
+      v                       |      +--> ALLOW
+L22 IDENTITY CONTINUITY ------+      +--> REFUSE
+ device / image / process            +--> HUMAN_REVIEW
  observation / revocation
-      |
-      v
-L21/L20 PREFLIGHT
-      |
-      v
-L19/L18 AUTHORITY CONSUMPTION
-      |
-      v
- ALLOW / REFUSE
+                              ^
+                              |
+                  CLUBHOUSE capability
+                  STRATA + derived risk
 ```
 
 ## Design laws
@@ -271,6 +278,16 @@ L19/L18 AUTHORITY CONSUMPTION
 78. **Identity corruption fails closed.** Broken sequence, hashes, lineage or impossible replay never becomes trusted evidence.
 79. **Identity persistence precedes privileged use.** Tracking failure blocks evidence before downstream authority is consumed.
 80. **Policy remains separate from identity.** L22 records facts; it does not decide what those facts authorize.
+81. **Policy is explicit.** CADDY routing heuristics and executor behavior are not authorization policy.
+82. **Every policy is default-deny.** No matching rule never becomes permission.
+83. **Denial dominates.** `REFUSE` cannot be numerically outranked by `ALLOW`.
+84. **Human review is not authority.** `HUMAN_REVIEW` requests a new decision; it does not approve work.
+85. **Risk is derived from operation facts.** Callers cannot lower risk by choosing a label.
+86. **Identity is checked at policy time.** L22 revocation defeats a previously matching allow rule.
+87. **Authority validation precedes policy permission.** L23 consumes validated authority facts; it does not replace L15-L21 gates.
+88. **Policy evaluation has no side effects.** Decisions consume no authority and execute no tools.
+89. **Policy identity is content-addressed.** Reordering equivalent rules does not change the policy ID.
+90. **Policy explanations are bounded.** Matched rules, trace entries and reason bytes have hard ceilings.
 
 ## Build
 
@@ -282,4 +299,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Next
 
-L23 should add a declarative policy engine that consumes trusted identity facts, authority purpose/scope/capability, STRATA context and operation risk to produce explicit allow/refuse/human-review decisions without embedding policy into attestors, ledgers or executors.
+L24 should add a durable signed policy registry / activation protocol so policy documents can be versioned, approved, activated, rolled back and revoked without allowing a process to silently replace the active policy in memory.
