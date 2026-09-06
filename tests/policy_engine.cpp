@@ -1,8 +1,8 @@
 #include "guff/policy_engine.hpp"
 #include "guff/sha256.hpp"
 
+#include <algorithm>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -145,14 +145,12 @@ int main() {
     const auto policy_id = policy.immutable_id();
     CHECK(policy_id.starts_with("guff:policy:sha256:"));
 
-    // Rule order is not semantic; immutable policy identity is canonicalized.
     auto reordered = policy;
     std::reverse(reordered.rules.begin(), reordered.rules.end());
     CHECK(reordered.immutable_id() == policy_id);
 
     guff::DeclarativePolicyEngine engine(policy, identities);
 
-    // Low-risk read can be allowed by policy without consuming an authority path.
     auto read_request = base_request(
         repo_evidence, guff::SlotCapability::RepositoryRead, guff::RealityLayer::Project);
     read_request.operation.requires_authority = false;
@@ -163,7 +161,6 @@ int main() {
     CHECK(read_result.risk == guff::PolicyRisk::Low);
     CHECK(read_result.policy_id == policy_id);
 
-    // Moderate build requires validated attested-runtime authority and exact runtime binding.
     auto build_request = base_request(
         build_evidence, guff::SlotCapability::CodeBuild, guff::RealityLayer::Project);
     auto build_result = engine.evaluate(build_request);
@@ -188,21 +185,18 @@ int main() {
     wrong_slot_identity.operation.slot_id = "forge.other";
     CHECK(engine.evaluate(wrong_slot_identity).status == guff::PolicyEvaluationStatus::IdentityRejected);
 
-    // High uncertainty raises a normally moderate build into review; allow rule no longer matches.
     auto uncertain = build_request;
     uncertain.operation.uncertainty = 0.90;
     auto uncertain_result = engine.evaluate(uncertain);
     CHECK(uncertain_result.risk == guff::PolicyRisk::High);
     CHECK(uncertain_result.decision == guff::PolicyDecision::HumanReview);
 
-    // Destructive work is always classified CRITICAL before rules see it.
     auto destructive = build_request;
     destructive.operation.destructive = true;
     auto destructive_result = engine.evaluate(destructive);
     CHECK(destructive_result.risk == guff::PolicyRisk::Critical);
     CHECK(destructive_result.decision == guff::PolicyDecision::HumanReview);
 
-    // Explicit deny beats review and allow regardless of lower numeric priority.
     auto world_request = base_request(
         world_evidence, guff::SlotCapability::WorldMutate, guff::RealityLayer::Simulation);
     world_request.operation.external_side_effect = true;
@@ -210,7 +204,6 @@ int main() {
     CHECK(world_result.risk == guff::PolicyRisk::High);
     CHECK(world_result.decision == guff::PolicyDecision::Refuse);
 
-    // No matching allow is default-deny.
     auto image_evidence = make_evidence(
         "image.generator", guff::RealityLayer::Application, "l23-image-session");
     CHECK(identities.record_attestation(image_evidence).ok());
@@ -221,7 +214,6 @@ int main() {
     CHECK(image_result.decision == guff::PolicyDecision::Refuse);
     CHECK(image_result.reason.find("default deny") != std::string::npos);
 
-    // Revocation is checked before permissive rules and does not mutate authority state.
     const auto process_id = guff::runtime_process_identity_id(
         build_evidence.provider_id, build_evidence.binding.process_instance_sha256);
     const auto before = identities.inspect();
@@ -233,7 +225,6 @@ int main() {
     const auto after = identities.inspect();
     CHECK(after.attestations == before.attestations);
 
-    // Default-allow documents are invalid by construction.
     auto unsafe_policy = policy;
     unsafe_policy.default_decision = guff::PolicyDecision::Allow;
     guff::DeclarativePolicyEngine unsafe_engine(unsafe_policy, identities);
@@ -241,7 +232,6 @@ int main() {
     CHECK(unsafe_result.status == guff::PolicyEvaluationStatus::InvalidPolicy);
     CHECK(unsafe_result.decision == guff::PolicyDecision::Refuse);
 
-    // An unconstrained ALLOW rule is rejected to prevent accidental allow-all policy.
     guff::PolicyDocument wildcard_policy;
     wildcard_policy.policy_name = "unsafe-wildcard";
     guff::PolicyRule wildcard;
@@ -250,7 +240,6 @@ int main() {
     wildcard_policy.rules = {wildcard};
     CHECK(!wildcard_policy.validate().empty());
 
-    // Hard evaluation ceilings fail closed.
     guff::DeclarativePolicyEngine tiny_budget(
         policy, identities, {.max_rules = 1U, .max_matched_rules = 1U,
                              .max_trace_entries = 4U, .max_reason_bytes = 128U});
