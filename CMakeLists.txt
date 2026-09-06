@@ -1,11 +1,17 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.25.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.26.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(GUFF_BUILD_TESTS "Build GOLF GUFF tests" ON)
+option(GUFF_ENABLE_SANITIZERS "Enable AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+
+if(GUFF_ENABLE_SANITIZERS AND NOT MSVC)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+endif()
 
 add_library(guff_core STATIC
     src/reality.cpp
@@ -34,6 +40,7 @@ add_library(guff_core STATIC
     src/policy_registry.cpp
     src/policy_registry_query.cpp
     src/operator_console.cpp
+    src/release_gate.cpp
     src/authority_gate.cpp
     src/sha256.cpp
     src/model_manifest.cpp
@@ -61,6 +68,9 @@ target_link_libraries(GOLF-GUFF PRIVATE guff_core)
 
 add_executable(GOLF-GUFF-OPERATOR src/operator_main.cpp)
 target_link_libraries(GOLF-GUFF-OPERATOR PRIVATE guff_core)
+
+add_executable(GOLF-GUFF-RELEASE-CHECK src/release_main.cpp)
+target_link_libraries(GOLF-GUFF-RELEASE-CHECK PRIVATE guff_core)
 
 if(GUFF_BUILD_TESTS)
     enable_testing()
@@ -174,4 +184,16 @@ if(GUFF_BUILD_TESTS)
     add_test(NAME guff.operator_console COMMAND guff_operator_console)
     add_test(NAME guff.operator_cli
              COMMAND GOLF-GUFF-OPERATOR "${CMAKE_CURRENT_BINARY_DIR}/operator-empty-state")
+
+    add_executable(guff_release_gate tests/release_gate.cpp)
+    target_link_libraries(guff_release_gate PRIVATE guff_core)
+    add_test(NAME guff.release_gate COMMAND guff_release_gate)
+
+    add_executable(guff_release_adversarial tests/release_adversarial.cpp)
+    target_link_libraries(guff_release_adversarial PRIVATE guff_core)
+    add_test(NAME guff.release_adversarial COMMAND guff_release_adversarial)
+
+    add_test(NAME guff.release_cli_fail_closed
+             COMMAND GOLF-GUFF-RELEASE-CHECK "${CMAKE_CURRENT_BINARY_DIR}/release-empty-state")
+    set_tests_properties(guff.release_cli_fail_closed PROPERTIES WILL_FAIL TRUE)
 endif()
