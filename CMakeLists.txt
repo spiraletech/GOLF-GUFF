@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.29.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.30.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,6 +30,7 @@ add_library(guff_core STATIC
     src/gguf_inference.cpp
     src/kernel_task.cpp
     src/benchmark_probe.cpp
+    src/replay_proof.cpp
     src/execution_session.cpp
     src/session_journal.cpp
     src/recovery_protocol.cpp
@@ -154,6 +155,10 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_benchmark_probe tests/benchmark_probe.cpp)
     target_link_libraries(guff_benchmark_probe PRIVATE guff_core)
     add_test(NAME guff.benchmark_probe COMMAND guff_benchmark_probe)
+
+    add_executable(guff_replay_proof tests/replay_proof.cpp)
+    target_link_libraries(guff_replay_proof PRIVATE guff_core)
+    add_test(NAME guff.replay_proof COMMAND guff_replay_proof)
 
     add_executable(guff_execution_session tests/execution_session.cpp)
     target_link_libraries(guff_execution_session PRIVATE guff_core)
