@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.27.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.27.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,6 +26,7 @@ add_library(guff_core STATIC
     src/clubhouse.cpp
     src/forge.cpp
     src/native_process.cpp
+    src/artifact_vault.cpp
     src/gguf_inference.cpp
     src/execution_session.cpp
     src/session_journal.cpp
@@ -127,6 +128,14 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_native_process tests/native_process.cpp)
     target_link_libraries(guff_native_process PRIVATE guff_core)
     add_test(NAME guff.native_process COMMAND guff_native_process)
+
+    add_executable(guff_artifact_vault tests/artifact_vault.cpp)
+    target_link_libraries(guff_artifact_vault PRIVATE guff_core)
+    add_test(NAME guff.artifact_vault COMMAND guff_artifact_vault)
+
+    add_executable(guff_artifact_gguf_bridge tests/artifact_gguf_bridge.cpp)
+    target_link_libraries(guff_artifact_gguf_bridge PRIVATE guff_core)
+    add_test(NAME guff.artifact_gguf_bridge COMMAND guff_artifact_gguf_bridge)
 
     add_executable(guff_gguf_inference tests/gguf_inference.cpp)
     target_link_libraries(guff_gguf_inference PRIVATE guff_core)

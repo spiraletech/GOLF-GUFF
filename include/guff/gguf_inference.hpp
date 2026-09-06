@@ -1,5 +1,6 @@
 #pragma once
 
+#include "guff/artifact_vault.hpp"
 #include "guff/clubhouse.hpp"
 #include "guff/forge.hpp"
 #include "guff/model_registry.hpp"
@@ -84,6 +85,12 @@ public:
         const SlotManifest& slot,
         std::string_view model_id,
         const std::filesystem::path& model_path,
+        LlamaCppBindingConfig config);
+
+    [[nodiscard]] GgufBindResult bind_llama_cpp(
+        const SlotManifest& slot,
+        std::string_view model_id,
+        const ResolvedArtifact& artifact,
         LlamaCppBindingConfig config);
 
     [[nodiscard]] std::optional<GgufInferenceBinding> find_binding(

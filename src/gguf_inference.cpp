@@ -346,6 +346,34 @@ GgufBindResult GgufInferenceBridge::bind_llama_cpp(
     return result;
 }
 
+GgufBindResult GgufInferenceBridge::bind_llama_cpp(
+    const SlotManifest& slot,
+    std::string_view model_id,
+    const ResolvedArtifact& artifact,
+    LlamaCppBindingConfig config) {
+    GgufBindResult result;
+    if (!artifact.ok()) {
+        result.errors.emplace_back("artifact resolver did not produce a verified local artifact");
+        result.errors.insert(result.errors.end(), artifact.errors.begin(), artifact.errors.end());
+        return result;
+    }
+    if (artifact.model_id != model_id) {
+        result.errors.emplace_back("resolved artifact belongs to a different model identity");
+        return result;
+    }
+    const auto manifest = models_.find(model_id);
+    if (!manifest) {
+        result.errors.emplace_back("model_id is not registered");
+        return result;
+    }
+    if (artifact.file_size_bytes != manifest->file_size_bytes ||
+        artifact.sha256 != manifest->sha256) {
+        result.errors.emplace_back("resolved artifact identity does not match the registered model manifest");
+        return result;
+    }
+    return bind_llama_cpp(slot, model_id, artifact.local_path, std::move(config));
+}
+
 std::optional<GgufInferenceBinding> GgufInferenceBridge::find_binding(
     std::string_view slot_immutable_id) const {
     const auto found = bindings_.find(std::string(slot_immutable_id));
