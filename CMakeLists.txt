@@ -172,4 +172,6 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_operator_console tests/operator_console.cpp)
     target_link_libraries(guff_operator_console PRIVATE guff_core)
     add_test(NAME guff.operator_console COMMAND guff_operator_console)
+    add_test(NAME guff.operator_cli
+             COMMAND GOLF-GUFF-OPERATOR "${CMAKE_CURRENT_BINARY_DIR}/operator-empty-state")
 endif()
