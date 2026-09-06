@@ -47,13 +47,44 @@ The alpha gate also refuses:
 - missing/malformed source-tree SHA-256;
 - evidence overflow or zero release-budget ceilings.
 
+## Alpha release CLI
+
+L31 ships `GOLF-GUFF-ALPHA-CHECK`, a read-only command-line evaluator for the alpha certificate contract.
+
+Usage:
+
+```text
+GOLF-GUFF-ALPHA-CHECK <alpha-evidence-manifest>
+```
+
+The manifest is strict and starts with:
+
+```text
+GOLF-GUFF-ALPHA-EVIDENCE-V1
+version=0.31.0-alpha.1
+commit_sha=<40-or-64-hex-git-object>
+source_tree_sha256=<64-hex-sha256>
+ring_release_status=READY
+ring_release_id=guff:ring-release:sha256:<digest>
+PASS\tl27-real-gguf-bridge\t<sha256>\t<detail>
+PASS\tl28-offline-kernel-task\t<sha256>\t<detail>
+PASS\tl29-benchmark-memory-proof\t<sha256>\t<detail>
+PASS\tl30-failure-replay-proof\t<sha256>\t<detail>
+PASS\trelease-package-build\t<sha256>\t<detail>
+```
+
+Unknown fields, duplicate required fields, malformed evidence lines, missing files, missing required evidence or non-READY ring state fail closed. A READY evaluation prints the content-addressed alpha release ID and exits zero; blocked/invalid input exits non-zero.
+
+The CLI does not mint a Ring release decision. It consumes the L26 Ring release identity supplied by the release process and evaluates only the L31 alpha envelope.
+
 ## Packaging contract
 
-The CMake project version becomes `0.31.0` and gains install/package rules for:
+The CMake project version is `0.31.0` and install/package rules ship:
 
 - `GOLF-GUFF`
 - `GOLF-GUFF-OPERATOR`
 - `GOLF-GUFF-RELEASE-CHECK`
+- `GOLF-GUFF-ALPHA-CHECK`
 - `guff_core`
 - public GUFF headers
 - project documentation
@@ -84,7 +115,7 @@ L26  RING RELEASE GATE READY
 L31  ALPHA RELEASE CERTIFICATE
   |
   v
-INSTALL + CPACK ARCHIVE
+ALPHA CHECK + INSTALL + CPACK ARCHIVE
 ```
 
 ## Scope boundary
@@ -113,5 +144,10 @@ The alpha certificate proves the declared GUFF release envelope and evidence set
 - wrong version, malformed commit and malformed source digest block;
 - duplicate/malformed evidence is INVALID;
 - zero release budgets are INVALID.
+
+The CLI regressions additionally prove:
+
+- a complete strict evidence manifest returns READY;
+- a missing evidence manifest fails closed.
 
 This is the end of the L27-L31 product-proof sprint. Further work should be driven by real model runs, packaging results, user-facing execution and measured defects rather than automatically adding more theoretical layers.
