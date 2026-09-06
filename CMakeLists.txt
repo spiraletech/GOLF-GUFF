@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.30.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.31.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,6 +7,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(GUFF_BUILD_TESTS "Build GOLF GUFF tests" ON)
 option(GUFF_ENABLE_SANITIZERS "Enable AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+
+include(GNUInstallDirs)
 
 if(GUFF_ENABLE_SANITIZERS AND NOT MSVC)
     add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
@@ -31,6 +33,7 @@ add_library(guff_core STATIC
     src/kernel_task.cpp
     src/benchmark_probe.cpp
     src/replay_proof.cpp
+    src/alpha_release.cpp
     src/execution_session.cpp
     src/session_journal.cpp
     src/recovery_protocol.cpp
@@ -160,6 +163,10 @@ if(GUFF_BUILD_TESTS)
     target_link_libraries(guff_replay_proof PRIVATE guff_core)
     add_test(NAME guff.replay_proof COMMAND guff_replay_proof)
 
+    add_executable(guff_alpha_release tests/alpha_release.cpp)
+    target_link_libraries(guff_alpha_release PRIVATE guff_core)
+    add_test(NAME guff.alpha_release COMMAND guff_alpha_release)
+
     add_executable(guff_execution_session tests/execution_session.cpp)
     target_link_libraries(guff_execution_session PRIVATE guff_core)
     add_test(NAME guff.execution_session COMMAND guff_execution_session)
@@ -230,3 +237,31 @@ if(GUFF_BUILD_TESTS)
              COMMAND GOLF-GUFF-RELEASE-CHECK "${CMAKE_CURRENT_BINARY_DIR}/release-empty-state")
     set_tests_properties(guff.release_cli_fail_closed PROPERTIES WILL_FAIL TRUE)
 endif()
+
+install(TARGETS
+    guff_core
+    GOLF-GUFF
+    GOLF-GUFF-OPERATOR
+    GOLF-GUFF-RELEASE-CHECK
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+install(DIRECTORY include/guff DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DATADIR}/golf-guff/docs)
+install(FILES README.md release/alpha-manifest.txt
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/golf-guff)
+
+set(CPACK_PACKAGE_NAME "GOLF-GUFF")
+set(CPACK_PACKAGE_VENDOR "EtherTech")
+set(CPACK_PACKAGE_VERSION "0.31.0-alpha.1")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+    "Experimental governed local-AI control plane for verified local GGUF execution")
+set(CPACK_PACKAGE_FILE_NAME
+    "GOLF-GUFF-0.31.0-alpha.1-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+if(WIN32)
+    set(CPACK_GENERATOR "ZIP")
+else()
+    set(CPACK_GENERATOR "TGZ")
+endif()
+include(CPack)
