@@ -7,6 +7,7 @@
 #include "guff/model_registry.hpp"
 #include "guff/native_process.hpp"
 #include "guff/policy_engine.hpp"
+#include "guff/policy_registry.hpp"
 #include "guff/reality.hpp"
 #include "guff/runtime_attestation.hpp"
 #include "guff/runtime_identity_store.hpp"
@@ -26,7 +27,7 @@ int main() {
     guff::RealityStack reality;
     reality.observe({guff::RealityLayer::Project, "spiraletech/GOLF-GUFF", "ring", 1.0});
     reality.observe({guff::RealityLayer::Runtime, "native-cpp20", "guff-core", 1.0});
-    reality.observe({guff::RealityLayer::Semantic, "declarative-policy-engine", "L23", 1.0});
+    reality.observe({guff::RealityLayer::Semantic, "signed-policy-registry", "L24", 1.0});
 
     const auto hardware = guff::detect_hardware_profile();
     guff::ModelRegistry registry;
@@ -38,7 +39,7 @@ int main() {
     const auto identity_state = identity_store.inspect();
 
     guff::PolicyDocument bootstrap_policy;
-    bootstrap_policy.policy_name = "ring-l23-bootstrap";
+    bootstrap_policy.policy_name = "ring-l24-bootstrap";
     guff::PolicyRule bootstrap_review;
     bootstrap_review.rule_name = "review-unconfigured-high-risk-project-work";
     bootstrap_review.effect = guff::PolicyDecision::HumanReview;
@@ -74,7 +75,7 @@ int main() {
     const auto delta = leech.observe_text(
         tool_grant,
         "tool://guff/bootstrap",
-        "L23 declarative policy engine online");
+        "L24 signed policy registry online");
 
     if (delta.current) {
         static_cast<void>(symbiosis.stamp_observation(
@@ -85,7 +86,7 @@ int main() {
     if (auto slice = leech.slice_text(
             tool_grant,
             "tool://guff/bootstrap",
-            "L23 declarative policy engine online",
+            "L24 signed policy registry online",
             0U,
             1024U)) {
         static_cast<void>(context.add(std::move(*slice)));
@@ -170,7 +171,7 @@ int main() {
 
     guff::NativeRuntimeAttestationProvider native_attestor;
 
-    std::cout << "GOLF GUFF / RING L23\n";
+    std::cout << "GOLF GUFF / RING L24\n";
     std::cout << "REALITY: " << reality.describe() << '\n';
     std::cout << "HARDWARE-ID: " << hardware.immutable_id() << '\n';
     std::cout << "SCORECARD-STORE: " << store.path().string() << " (lazy hydration)\n";
@@ -218,6 +219,9 @@ int main() {
               << " rules=" << policy_engine.policy().rules.size()
               << " default=" << guff::to_string(policy_engine.policy().default_decision)
               << " precedence=REFUSE>HUMAN_REVIEW>ALLOW side-effects=none\n";
+    std::cout << "POLICY-REGISTRY: packages=signed controls=separate-signer"
+              << " transitions=ACTIVATE|ROLLBACK|REVOKE cas=expected-active"
+              << " replay=nonce+control-id stale-engines=fail-closed\n";
     std::cout << "CADDY-ROUTER: " << guff::to_string(decision.status)
               << " depth=" << decision.recursion_depth
               << " verify=" << (decision.require_verification ? "yes" : "no") << '\n';
