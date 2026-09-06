@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <sstream>
+#include <utility>
 
 namespace guff {
 namespace {
@@ -63,6 +64,7 @@ std::string KernelBenchmarkProof::canonical_payload() const {
     append_number(out, "schema_version", schema_version);
     append_field(out, "status", to_string(status));
     append_field(out, "run_id", run_id);
+    append_field(out, "recorded_at_utc", recorded_at_utc);
     append_field(out, "task_proof_id", task_proof_id);
     append_field(out, "model_id", model_id);
     append_field(out, "hardware_id", hardware_id);
@@ -77,6 +79,7 @@ std::string KernelBenchmarkProof::canonical_payload() const {
     if (scorecard_record) {
         const auto& record = *scorecard_record;
         append_field(out, "scorecard_run_id", record.run_id);
+        append_field(out, "scorecard_recorded_at_utc", record.recorded_at_utc);
         append_number(out, "prompt_tokens", record.context_tokens);
         append_number(out, "output_tokens", record.output_tokens);
         append_field(out, "prompt_tps", std::to_string(record.metrics.prompt_tokens_per_second));
@@ -104,6 +107,7 @@ KernelBenchmarkProof KernelBenchmarkProbe::capture(
     const BenchmarkCaptureRequest& capture_request) const {
     KernelBenchmarkProof proof;
     proof.run_id = capture_request.run_id;
+    proof.recorded_at_utc = capture_request.recorded_at_utc;
     proof.hardware_id = hardware.immutable_id();
     proof.task = task_request.route_request.task;
     proof.profile_name = task_request.route_request.profile_name;
@@ -117,11 +121,13 @@ KernelBenchmarkProof KernelBenchmarkProbe::capture(
         return proof;
     }
 
-    if (capture_request.token_telemetry &&
-        !capture_request.token_telemetry->validate().empty()) {
-        proof.status = BenchmarkProofStatus::InvalidInput;
-        proof.reason = capture_request.token_telemetry->validate().front();
-        return proof;
+    if (capture_request.token_telemetry) {
+        const auto token_errors = capture_request.token_telemetry->validate();
+        if (!token_errors.empty()) {
+            proof.status = BenchmarkProofStatus::InvalidInput;
+            proof.reason = token_errors.front();
+            return proof;
+        }
     }
 
     if (!task_result.succeeded() || !task_result.execution || !task_result.provenance) {
