@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(GOLF_GUFF VERSION 0.24.0 LANGUAGES CXX)
+project(GOLF_GUFF VERSION 0.25.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,6 +32,8 @@ add_library(guff_core STATIC
     src/runtime_identity_store.cpp
     src/policy_engine.cpp
     src/policy_registry.cpp
+    src/policy_registry_query.cpp
+    src/operator_console.cpp
     src/authority_gate.cpp
     src/sha256.cpp
     src/model_manifest.cpp
@@ -56,6 +58,9 @@ endif()
 
 add_executable(GOLF-GUFF src/main.cpp)
 target_link_libraries(GOLF-GUFF PRIVATE guff_core)
+
+add_executable(GOLF-GUFF-OPERATOR src/operator_main.cpp)
+target_link_libraries(GOLF-GUFF-OPERATOR PRIVATE guff_core)
 
 if(GUFF_BUILD_TESTS)
     enable_testing()
@@ -163,4 +168,10 @@ if(GUFF_BUILD_TESTS)
     add_executable(guff_policy_registry tests/policy_registry.cpp)
     target_link_libraries(guff_policy_registry PRIVATE guff_core)
     add_test(NAME guff.policy_registry COMMAND guff_policy_registry)
+
+    add_executable(guff_operator_console tests/operator_console.cpp)
+    target_link_libraries(guff_operator_console PRIVATE guff_core)
+    add_test(NAME guff.operator_console COMMAND guff_operator_console)
+    add_test(NAME guff.operator_cli
+             COMMAND GOLF-GUFF-OPERATOR "${CMAKE_CURRENT_BINARY_DIR}/operator-empty-state")
 endif()
