@@ -88,14 +88,20 @@ guff::ModelManifest manifest_for(const std::filesystem::path& path,
     return manifest;
 }
 
-guff::SlotManifest inference_slot(std::string name, std::size_t max_payload = 4096U) {
+guff::SlotManifest inference_slot(
+    std::string name,
+    std::size_t max_payload = 4096U,
+    guff::SlotTransport transport = guff::SlotTransport::LocalProcess
+) {
     guff::SlotManifest slot;
     slot.slot_name = std::move(name);
     slot.display_name = "GGUF Inference Test Slot";
     slot.version = "1.0.0";
     slot.kind = guff::SlotKind::Model;
-    slot.transport = guff::SlotTransport::LocalProcess;
-    slot.entrypoint = "llama.cpp://llama-cli";
+    slot.transport = transport;
+    slot.entrypoint = transport == guff::SlotTransport::InProcess
+        ? "llama.cpp://in-process"
+        : "llama.cpp://llama-cli";
     slot.capabilities = {guff::SlotCapability::ModelInfer};
     slot.allowed_layers = {guff::RealityLayer::Semantic};
     slot.required_permissions = {"model:infer", "device:execute"};
@@ -131,6 +137,47 @@ bool is_fake_llama_child(int argc, char** argv) {
         return std::string_view(value) == "--model";
     });
 }
+
+class FakeInProcessBackend final : public guff::GgufInProcessBackend {
+public:
+    bool load_model(
+        const guff::GgufInferenceBinding& binding,
+        std::vector<std::string>& errors
+    ) override {
+        if (binding.backend != guff::GgufInferenceBackendKind::InProcess ||
+            binding.model_path.empty()) {
+            errors.emplace_back("invalid in-process binding");
+            return false;
+        }
+        ++load_count;
+        return true;
+    }
+
+    guff::ForgeExecutorReport infer(
+        const guff::GgufInferenceBinding& binding,
+        const guff::SlotManifest&,
+        const guff::ForgeExecutionRequest& request,
+        guff::ForgeOutputSink& output
+    ) const override {
+        guff::ForgeExecutorReport report;
+        if (binding.backend != guff::GgufInferenceBackendKind::InProcess ||
+            request.payload.empty()) {
+            return report;
+        }
+        ++infer_count;
+        if (!output.write("IN_PROCESS_RESPONSE\n") ||
+            !output.write(request.payload)) {
+            return report;
+        }
+        report.completed = true;
+        report.exit_code = 0;
+        report.first_output_observed = true;
+        return report;
+    }
+
+    int load_count{0};
+    mutable int infer_count{0};
+};
 
 } // namespace
 
@@ -176,7 +223,8 @@ int main(int argc, char** argv) {
     assert(clubhouse.register_slot(slot));
 
     guff::NativeProcessRegistry processes;
-    guff::GgufInferenceBridge bridge(models, processes);
+    FakeInProcessBackend in_process_backend;
+    guff::GgufInferenceBridge bridge(models, processes, in_process_backend);
 
     guff::LlamaCppBindingConfig config;
     config.executable = executable;
@@ -228,6 +276,46 @@ int main(int argc, char** argv) {
     assert(integrated.evidence.size() == 1U);
     assert(integrated.evidence.front().passed);
     assert(integrated.evidence.front().detail.find(literal_prompt) == std::string::npos);
+
+    // L32 contract: verified in-process inference never installs or launches
+    // a NativeProcess binding. The real llama.cpp backend can replace this
+    // test double without changing Forge or slot policy.
+    const auto in_process_slot = inference_slot(
+        "model.gguf.in-process",
+        4096U,
+        guff::SlotTransport::InProcess
+    );
+    assert(clubhouse.register_slot(in_process_slot));
+
+    auto in_process_profile = config.profile;
+    const auto in_process_bound = bridge.bind_in_process(
+        in_process_slot,
+        model_id,
+        model_path,
+        in_process_profile
+    );
+    assert(in_process_bound.ok());
+    assert(in_process_backend.load_count == 1);
+    assert(processes.size() == 1U);
+
+    auto in_process_request = request_for(
+        in_process_slot,
+        "zero child process inference"
+    );
+    guff::ForgeOutputSink in_process_output(4096U);
+    const auto in_process_report = bridge(
+        in_process_slot,
+        in_process_request,
+        in_process_output
+    );
+    assert(in_process_report.completed);
+    assert(in_process_report.exit_code == 0);
+    assert(in_process_backend.infer_count == 1);
+    assert(processes.size() == 1U);
+    assert(in_process_output.captured().find("IN_PROCESS_RESPONSE") !=
+           std::string_view::npos);
+    assert(in_process_output.captured().find("zero child process inference") !=
+           std::string_view::npos);
 
     auto oversized = request_for(slot, std::string(5000U, 'x'));
     guff::ForgeOutputSink oversized_output(4096U);
