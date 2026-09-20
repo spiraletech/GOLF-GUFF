@@ -167,6 +167,11 @@ std::vector<std::string> GgufInferenceProfile::validate() const {
 
 std::string GgufInferenceBinding::canonical_identity_payload() const {
     std::ostringstream out;
+    // Preserve L27-L31 process binding identities exactly. Only the new
+    // in-process path receives an explicit backend discriminator.
+    if (backend == GgufInferenceBackendKind::InProcess) {
+        append_field(out, "backend", to_string(backend));
+    }
     append_field(out, "slot_immutable_id", slot_immutable_id);
     append_field(out, "model_id", model_id);
     append_field(out, "model_path", model_path.generic_string());
@@ -197,6 +202,15 @@ bool GgufBindResult::ok() const noexcept {
 GgufInferenceBridge::GgufInferenceBridge(const ModelRegistry& models,
                                          NativeProcessRegistry& processes) noexcept
     : models_(models), processes_(processes) {}
+
+GgufInferenceBridge::GgufInferenceBridge(
+    const ModelRegistry& models,
+    NativeProcessRegistry& processes,
+    GgufInProcessBackend& in_process_backend
+) noexcept
+    : models_(models),
+      processes_(processes),
+      in_process_backend_(&in_process_backend) {}
 
 GgufBindResult GgufInferenceBridge::bind_llama_cpp(
     const SlotManifest& slot,
@@ -287,6 +301,7 @@ GgufBindResult GgufInferenceBridge::bind_llama_cpp(
     if (!result.errors.empty()) return result;
 
     GgufInferenceBinding binding;
+    binding.backend = GgufInferenceBackendKind::LegacyProcess;
     binding.slot_immutable_id = slot_key;
     binding.model_id = std::string(model_id);
     binding.model_path = *canonical_model;
@@ -374,6 +389,98 @@ GgufBindResult GgufInferenceBridge::bind_llama_cpp(
     return bind_llama_cpp(slot, model_id, artifact.local_path, std::move(config));
 }
 
+GgufBindResult GgufInferenceBridge::bind_in_process(
+    const SlotManifest& slot,
+    std::string_view model_id,
+    const std::filesystem::path& model_path,
+    GgufInferenceProfile profile) {
+    GgufBindResult result;
+
+    if (!in_process_backend_) {
+        result.errors.emplace_back("no in-process GGUF backend is installed");
+        return result;
+    }
+    if (!slot.validate().empty()) {
+        result.errors.emplace_back("slot manifest is invalid");
+    }
+    if (slot.kind != SlotKind::Model) {
+        result.errors.emplace_back("GGUF inference requires a MODEL slot");
+    }
+    if (slot.transport != SlotTransport::InProcess) {
+        result.errors.emplace_back("in-process GGUF inference requires IN_PROCESS transport");
+    }
+    if (!slot.supports(SlotCapability::ModelInfer)) {
+        result.errors.emplace_back("GGUF inference slot must expose MODEL_INFER");
+    }
+
+    auto profile_errors = profile.validate();
+    result.errors.insert(result.errors.end(),
+                         profile_errors.begin(), profile_errors.end());
+    if (profile.max_prompt_bytes > slot.max_payload_bytes) {
+        result.errors.emplace_back("profile max_prompt_bytes exceeds the slot payload ceiling");
+    }
+    if (model_id.empty()) {
+        result.errors.emplace_back("model_id is required");
+    }
+
+    const auto slot_key = slot.immutable_id();
+    if (bindings_.contains(slot_key)) {
+        result.errors.emplace_back("slot already has a GGUF inference binding");
+    }
+
+    const auto manifest = models_.find(model_id);
+    if (!manifest) {
+        result.errors.emplace_back("model_id is not registered");
+    } else {
+        if (!models_.is_verified(model_id)) {
+            result.errors.emplace_back("model_id is registered but not verified");
+        }
+        if (manifest->format != ModelFormat::GGUF) {
+            result.errors.emplace_back("model manifest format is not GGUF");
+        }
+    }
+
+    const auto canonical_model = canonical_regular_file(model_path);
+    if (!canonical_model) {
+        result.errors.emplace_back("model_path must be an existing absolute regular file");
+    }
+
+    if (manifest && canonical_model) {
+        const auto verification = manifest->verify_file(*canonical_model);
+        if (!verification.ok()) {
+            result.errors.emplace_back("GGUF model bytes do not match the verified manifest");
+        }
+        const auto header = probe_gguf_header(*canonical_model);
+        if (!header.valid) {
+            result.errors.emplace_back("GGUF header preflight failed");
+            result.errors.insert(result.errors.end(), header.errors.begin(), header.errors.end());
+        }
+    }
+
+    if (!result.errors.empty()) return result;
+
+    GgufInferenceBinding binding;
+    binding.backend = GgufInferenceBackendKind::InProcess;
+    binding.slot_immutable_id = slot_key;
+    binding.model_id = std::string(model_id);
+    binding.model_path = *canonical_model;
+    binding.model_sha256 = manifest->sha256;
+    binding.profile = profile;
+
+    std::vector<std::string> backend_errors;
+    if (!in_process_backend_->load_model(binding, backend_errors)) {
+        result.errors.emplace_back("in-process GGUF backend rejected model load");
+        result.errors.insert(result.errors.end(),
+                             backend_errors.begin(), backend_errors.end());
+        return result;
+    }
+
+    result.binding_id = binding.immutable_id();
+    bindings_.emplace(slot_key, std::move(binding));
+    result.bound = true;
+    return result;
+}
+
 std::optional<GgufInferenceBinding> GgufInferenceBridge::find_binding(
     std::string_view slot_immutable_id) const {
     const auto found = bindings_.find(std::string(slot_immutable_id));
@@ -399,6 +506,13 @@ bool GgufInferenceBridge::verify_runtime_binding(
     }
     if (!probe_gguf_header(binding.model_path).valid) return false;
 
+    if (binding.backend == GgufInferenceBackendKind::InProcess) {
+        return true;
+    }
+
+    if (binding.executable.empty() || binding.executable_sha256.empty()) {
+        return false;
+    }
     const auto executable_digest = sha256_file(binding.executable);
     return executable_digest && *executable_digest == binding.executable_sha256;
 }
@@ -409,7 +523,6 @@ ForgeExecutorReport GgufInferenceBridge::operator()(
     ForgeOutputSink& output) const {
     ForgeExecutorReport failure;
     if (slot.kind != SlotKind::Model ||
-        slot.transport != SlotTransport::LocalProcess ||
         !slot.supports(SlotCapability::ModelInfer) ||
         request.invocation.capability != SlotCapability::ModelInfer) {
         return failure;
@@ -417,6 +530,13 @@ ForgeExecutorReport GgufInferenceBridge::operator()(
 
     const auto binding = find_binding(slot.immutable_id());
     if (!binding) return failure;
+
+    const bool transport_matches =
+        (binding->backend == GgufInferenceBackendKind::LegacyProcess &&
+         slot.transport == SlotTransport::LocalProcess) ||
+        (binding->backend == GgufInferenceBackendKind::InProcess &&
+         slot.transport == SlotTransport::InProcess);
+    if (!transport_matches) return failure;
     if (request.payload.empty() ||
         request.payload.size() > binding->profile.max_prompt_bytes ||
         contains_nul(request.payload)) {
@@ -426,6 +546,11 @@ ForgeExecutorReport GgufInferenceBridge::operator()(
     if (binding->profile.verification_mode == GgufVerificationMode::EveryExecution &&
         !verify_runtime_binding(*binding)) {
         return failure;
+    }
+
+    if (binding->backend == GgufInferenceBackendKind::InProcess) {
+        if (!in_process_backend_) return failure;
+        return in_process_backend_->infer(*binding, slot, request, output);
     }
 
     NativeLocalProcessExecutor native(processes_);
@@ -438,6 +563,14 @@ std::string_view to_string(GgufVerificationMode mode) noexcept {
     case GgufVerificationMode::BindOnly: return "BIND_ONLY";
     }
     return "EVERY_EXECUTION";
+}
+
+std::string_view to_string(GgufInferenceBackendKind kind) noexcept {
+    switch (kind) {
+    case GgufInferenceBackendKind::LegacyProcess: return "LEGACY_PROCESS";
+    case GgufInferenceBackendKind::InProcess: return "IN_PROCESS";
+    }
+    return "LEGACY_PROCESS";
 }
 
 } // namespace guff
