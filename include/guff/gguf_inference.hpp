@@ -23,6 +23,11 @@ enum class GgufVerificationMode : std::uint8_t {
     BindOnly
 };
 
+enum class GgufInferenceBackendKind : std::uint8_t {
+    LegacyProcess,
+    InProcess
+};
+
 struct GgufHeaderInfo {
     bool valid{false};
     std::uint32_t version{0U};
@@ -56,6 +61,7 @@ struct LlamaCppBindingConfig {
 };
 
 struct GgufInferenceBinding {
+    GgufInferenceBackendKind backend{GgufInferenceBackendKind::LegacyProcess};
     std::string slot_immutable_id;
     std::string model_id;
     std::filesystem::path model_path;
@@ -76,10 +82,31 @@ struct GgufBindResult {
     [[nodiscard]] bool ok() const noexcept;
 };
 
+class GgufInProcessBackend {
+public:
+    virtual ~GgufInProcessBackend() = default;
+
+    [[nodiscard]] virtual bool load_model(
+        const GgufInferenceBinding& binding,
+        std::vector<std::string>& errors
+    ) = 0;
+
+    [[nodiscard]] virtual ForgeExecutorReport infer(
+        const GgufInferenceBinding& binding,
+        const SlotManifest& slot,
+        const ForgeExecutionRequest& request,
+        ForgeOutputSink& output
+    ) const = 0;
+};
+
 class GgufInferenceBridge {
 public:
     GgufInferenceBridge(const ModelRegistry& models,
                         NativeProcessRegistry& processes) noexcept;
+
+    GgufInferenceBridge(const ModelRegistry& models,
+                        NativeProcessRegistry& processes,
+                        GgufInProcessBackend& in_process_backend) noexcept;
 
     [[nodiscard]] GgufBindResult bind_llama_cpp(
         const SlotManifest& slot,
@@ -92,6 +119,12 @@ public:
         std::string_view model_id,
         const ResolvedArtifact& artifact,
         LlamaCppBindingConfig config);
+
+    [[nodiscard]] GgufBindResult bind_in_process(
+        const SlotManifest& slot,
+        std::string_view model_id,
+        const std::filesystem::path& model_path,
+        GgufInferenceProfile profile = {});
 
     [[nodiscard]] std::optional<GgufInferenceBinding> find_binding(
         std::string_view slot_immutable_id) const;
@@ -108,9 +141,11 @@ private:
 
     const ModelRegistry& models_;
     NativeProcessRegistry& processes_;
+    GgufInProcessBackend* in_process_backend_{nullptr};
     std::unordered_map<std::string, GgufInferenceBinding> bindings_;
 };
 
 [[nodiscard]] std::string_view to_string(GgufVerificationMode mode) noexcept;
+[[nodiscard]] std::string_view to_string(GgufInferenceBackendKind kind) noexcept;
 
 } // namespace guff
