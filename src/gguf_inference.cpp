@@ -167,7 +167,11 @@ std::vector<std::string> GgufInferenceProfile::validate() const {
 
 std::string GgufInferenceBinding::canonical_identity_payload() const {
     std::ostringstream out;
-    append_field(out, "backend", to_string(backend));
+    // Preserve L27-L31 process binding identities exactly. Only the new
+    // in-process path receives an explicit backend discriminator.
+    if (backend == GgufInferenceBackendKind::InProcess) {
+        append_field(out, "backend", to_string(backend));
+    }
     append_field(out, "slot_immutable_id", slot_immutable_id);
     append_field(out, "model_id", model_id);
     append_field(out, "model_path", model_path.generic_string());
